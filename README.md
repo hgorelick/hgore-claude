@@ -125,6 +125,16 @@ The hook short-circuits and lets the call through if the leading command in the 
 
 The rule pairs with the "Tool selection" / "Escape hatch" sections in `CLAUDE.md.example` — Claude reads those at session start and knows it has to state *what banned form, why no alternative, what outcome* before invoking one.
 
+### Customizing the allowlist
+
+Don't like that some tool is banned, or want a project-local CLI added to the allowlist? Just tell Claude:
+
+> "Edit `~/.claude/hooks/block-banned-bash.sh` to add `mycli` to the allowlist."
+> "Remove `awk` from the banned list — I use it too often for one-liners."
+> "Allow `jq` standalone too; I don't want to be prompted for it."
+
+Claude can edit the hook script directly. The allowlist is the `grep -qE '^[[:space:]]*(...)([[:space:]]|$)'` regex near the top of `block-banned-bash.sh`; the banned-pattern blocks are below it. Both are plain extended-regex alternations — adding a tool is one word in the right group. After editing, the next Bash call picks up the new rules; no restart needed.
+
 ## What the statusline does
 
 `statusline.sh` reads the JSON Claude Code passes on stdin and prints:
