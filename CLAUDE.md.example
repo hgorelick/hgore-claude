@@ -1,0 +1,25 @@
+# Global rules
+
+## Tool selection
+
+- **Prefer Read/Edit/Write over Bash for file I/O.** Bash is for shell-only operations (git, gh, cargo/npm/etc., grep/find, process management, network). For reading, editing, or writing file contents, use the dedicated tools — they preserve diffs, integrate with the harness, and avoid permission prompts.
+- **Banned Bash commands** (use the dedicated tool instead, or restructure the task):
+  - `cat`, `head`, `tail`, `less`, `more` for file viewing → **Read**
+  - `sed`, `awk` for in-place edits or substitutions → **Edit**
+  - `echo > file`, `echo >> file`, heredoc-to-file (`cat <<EOF >file`), `printf > file` for writing → **Write**
+  - `jq` for JSON munging → **Read** the file and parse mentally, or pipe to a Read-able file and Read it. (Exception: when consuming live tool output that isn't on disk — e.g. `gh pr view --json ... --jq ...` — `jq` is part of the wrapping CLI invocation, not a standalone file-processing call. The PreToolUse hook reflects this distinction.)
+- **Allowlisted CLIs always pass** (even when piped through `head`/`tail`/etc.): `gh`, `git`, `cargo` (and `~/.cargo/bin/cargo` or absolute `/Users/<user>/.cargo/bin/cargo`), `rustc`, `rustup`, `npm`, `npx`, `pnpm`, `yarn`, `bun`, `bunx`, `node`, `deno`, `python`/`python3`, `pip`/`pip3`, `uv`, `make`, `cmake`, `docker`, `ls`, `cd`, `wc`, `find`, `rg`, `cp`, `mv`.
+- **For cargo, prefer `~/.cargo/bin/cargo`** over absolute `/Users/<user>/.cargo/bin/cargo`. Both are allowlisted by the hook, but `~` is portable and avoids hardcoding a username. The hook short-circuits when the leading command in the pipeline is one of these — `cargo test 2>&1 | head -20` and `gh pr view --json reviews | jq '.reviews'` are fine. The rule is about not reaching for `cat`/`sed`/`echo >`/standalone `jq` *as the primary tool*; it's not about wrapping every dev workflow.
+- These rules apply globally, in every project. Project-specific `CLAUDE.md` files may add stricter rules but cannot relax these.
+
+## Escape hatch
+
+If a banned Bash form is genuinely the only way to accomplish a task (e.g. piping live output through `awk` for column extraction with no on-disk equivalent), **ask the user for explicit permission first, with a stated reason**. Don't try to slip it past the hook — `~/.claude/hooks/block-banned-bash.sh` returns `permissionDecision: "ask"` for the patterns above, which surfaces a permission prompt.
+
+When you invoke a banned form (or are about to), you MUST in the user-facing text immediately preceding the tool call state:
+
+1. **What** banned form you're using (the specific command).
+2. **Why** Read/Edit/Write/the allowlist won't work here (the concrete blocker — not a generic "easier this way").
+3. **What outcome** you need from the call.
+
+A bare permission prompt with no preceding rationale is unacceptable — the user should never have to guess why the prompt fired. If you can't articulate a reason that survives "could Read/Edit/Write/grep do this?", don't run the command.
