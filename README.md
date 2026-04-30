@@ -135,6 +135,10 @@ Don't like that some tool is banned, or want a project-local CLI added to the al
 
 …are all enough. Claude will open `~/.claude/hooks/block-banned-bash.sh`, find the right regex (the allowlist is near the top; the banned-pattern blocks are below it), and edit it for you. The next Bash call picks up the change — no restart needed.
 
+### Heads up: it's not foolproof
+
+Even with the `CLAUDE.md` rule *and* the hook firing a permission prompt, Claude will still reach for `cat`/`sed`/`echo > file`/standalone `jq` more often than you'd expect — sometimes after explicitly acknowledging the rule in the same turn. The hook makes that harmless (you just deny the prompt) but it's annoying. When it happens, deny the call and remind Claude to use Read/Edit/Write. Treat the hook as a safety net for when the rule slips, not a guarantee Claude will follow the rule on its own.
+
 ## What the statusline does
 
 `statusline.sh` reads the JSON Claude Code passes on stdin and prints:
