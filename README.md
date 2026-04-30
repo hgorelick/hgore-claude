@@ -127,13 +127,13 @@ The rule pairs with the "Tool selection" / "Escape hatch" sections in `CLAUDE.md
 
 ### Customizing the allowlist
 
-Don't like that some tool is banned, or want a project-local CLI added to the allowlist? Just tell Claude:
+Don't like that some tool is banned, or want a project-local CLI added to the allowlist? Just tell Claude in plain English — no need to point it at the file or describe the regex. Things like:
 
-> "Edit `~/.claude/hooks/block-banned-bash.sh` to add `mycli` to the allowlist."
-> "Remove `awk` from the banned list — I use it too often for one-liners."
-> "Allow `jq` standalone too; I don't want to be prompted for it."
+> "whitelist jq in the banned hook"
+> "stop banning awk"
+> "add mycli to the hook allowlist"
 
-Claude can edit the hook script directly. The allowlist is the `grep -qE '^[[:space:]]*(...)([[:space:]]|$)'` regex near the top of `block-banned-bash.sh`; the banned-pattern blocks are below it. Both are plain extended-regex alternations — adding a tool is one word in the right group. After editing, the next Bash call picks up the new rules; no restart needed.
+…are all enough. Claude will open `~/.claude/hooks/block-banned-bash.sh`, find the right regex (the allowlist is near the top; the banned-pattern blocks are below it), and edit it for you. The next Bash call picks up the change — no restart needed.
 
 ## What the statusline does
 
