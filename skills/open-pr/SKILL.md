@@ -66,8 +66,6 @@ gh pr create --title "type: concise PR title" --body "$(cat <<'EOF'
 
 ## Test plan
 - [ ] How to verify the changes work
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
 )"
 ```
@@ -81,6 +79,7 @@ EOF
 - Summary section: high-level what and why (1-3 bullets)
 - Changes section: specific changes grouped by area
 - Test plan: concrete verification steps
+- NEVER add AI attribution (no "🤖 Generated with…" footers, no Co-Authored-By lines, no Claude/Anthropic mentions). Same rule as commit messages.
 
 ### 6. Report
 
