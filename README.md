@@ -55,9 +55,8 @@ skills/
 
   # Blocker handling & scope
   explain-blockers/                           triage a review's blockers into decisions for you
-  solve-blockers/  solve-blockers-headless/   research each blocker to a recommended fix
+  solve-blockers/                             research each blocker to a recommended fix
   scope-check/                                does the plan deliver each brief Goal in full?
-  implementation-verify/                      independent re-proof of a finished chunk
 
   # Setup & shared internals
   features-init/                              scaffold the features/ folder in a new project
