@@ -60,6 +60,14 @@ Both write their resolution to the feature's `decisions.md` — the durable arbi
 
 A large feature can carry more than one engineering plan — call them **tracks**, under `plans/<track>/`. The tracks of one feature **co-deliver**: none ships alone, and merging one to `main` deploys nothing on its own, so the reviewers deliberately don't flag "orphaned" or "half-integrated" states between sibling tracks. They still check that the union of the tracks covers the brief, and that shared contracts between tracks stay consistent.
 
+## The scope gate
+
+An engineering plan can pass its own review — internally sound, well-factored, every chunk clean — and still quietly under-deliver the brief: narrowing a Goal to a subset, a weaker signal, or an action taken before its basis exists. `/engineering-plan-review-v2` prosecutes the plan on its own terms; it doesn't independently re-derive the brief's full intent.
+
+So once the engineering plan returns **CLOSED**, always run **`/scope-check`**. It reads each brief Goal and asks whether the plan delivers it *in full*. Every narrowing it finds comes back as an explicit decision for you: accept the cut — recorded in `decisions.md` — or widen the plan to cover it.
+
+Scope-check closes a loop rather than ending one. If resolving what it finds changes the brief or the engineering plan, the review that previously blessed that artifact no longer holds — so re-run it. A changed brief goes back through `/brief-review-v2`; a changed engineering plan goes back through `/engineering-plan-review-v2`. You drop down to chunk plans only when scope-check comes back clean *and* every artifact it forced a change to has been re-reviewed to a clean verdict.
+
 ## The deterministic floor
 
 Before any LLM-judgment review runs, `/plan-lint` runs. It parses the markdown and applies mechanical checks — DAG cycles, "and"-chunks that smuggle two units into one, vague exit criteria, premature abstractions, position-encoded slugs (`01-`, `02-`), review-budget overflow, deferrals with no destination, invariants with no falsifier. No model judgment, milliseconds to run, same answer every time.
@@ -79,14 +87,6 @@ On a clean **COMPLETE** verdict, `/execute-plan` opens the chunk's PR into `main
 Then `/review-pr-v2` runs the adversarial tribunal on the actual PR — the same author-then-prosecute pattern, now against the diff and the passing gates. It applies fixes, re-runs the gates, commits, and posts the verdict to the PR. After merge, `/cleanup-worktree` tears the chunk's worktree down.
 
 There's a matching automation at the plan layer: when `/plan-review-v2` returns APPROVED **twice in a row**, it opens the plan-doc PR inline, the same way and for the same reason.
-
-### Verification, when you want a second proof
-
-Three skills give you independent re-proof rather than self-attestation:
-
-- **`/scope-check`** — does the plan actually deliver each brief Goal *in full*, or does it quietly narrow one to a subset, a weaker signal, or an action taken before its basis exists? Every unapproved narrowing comes back as a decision for you.
-- **`/contract-review`** — checks cross-artifact contracts (PR-stack breakdowns, migration runbooks, "do exactly this" handoffs) for ambiguity, scope creep, and redundant gates; its editing bias is to delete and tighten.
-- **`/implementation-verify`** — re-proves a finished chunk against its own plan from a clean state, re-running the gates itself and observing every acceptance criterion, so a chunk reaches its PR on an external verdict rather than the implementer's word.
 
 ## Context hygiene — the practice that makes the reviews honest
 
