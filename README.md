@@ -63,12 +63,10 @@ skills/
   _author-common/ _plan-common/               shared protocols the skills load
   _review-common/ _spec-common/
 hooks/
-  block-banned-bash.sh                        nudge Claude to Read/Edit/Write over cat/sed/echo>file
   block-self-scheduling.sh                    ask before Claude self-invokes /open-pr, /execute-plan,
                                               /review-pr-v2, or a scheduler
 statusline.sh                                 ctx-usage | dir | branch | model
-settings.example.json                         wires up the hooks + statusline
-CLAUDE.md.example                             the global rules the hooks enforce
+settings.example.json                         wires up the hook + statusline
 ```
 
 ## Conventions the pack assumes
@@ -87,7 +85,7 @@ Plus a project root that carries:
 
 - `spec.md` — the product source of truth (business rules, formulas).
 - `personas/*.md` — the reviewer lenses (`architecture.md`, `security.md`, `testing.md`, …). The review skills load these; **they must exist at your repo root** or the review stops rather than run under-calibrated.
-- `CLAUDE.md` — your global rules (the hooks are guard rails for the rules in `CLAUDE.md.example`).
+- `CLAUDE.md` — your global rules (the skills read it for project conventions and business rules).
 
 Run `/features-init` to scaffold the `features/` folder and its templates in a new project.
 
@@ -105,9 +103,8 @@ cd ~/.claude
 mkdir -p skills
 for d in ~/src/hgore-claude/skills/*/; do ln -s "$d" "skills/$(basename "$d")"; done
 
-# Hooks
+# Hook
 mkdir -p hooks
-ln -s ~/src/hgore-claude/hooks/block-banned-bash.sh    hooks/block-banned-bash.sh
 ln -s ~/src/hgore-claude/hooks/block-self-scheduling.sh hooks/block-self-scheduling.sh
 
 # Statusline
@@ -132,15 +129,6 @@ If you don't have a `~/.claude/settings.json`, copy the example. If you do, merg
 cp ~/src/hgore-claude/settings.example.json ~/.claude/settings.json   # only if you have none
 ```
 
-### Wire up `CLAUDE.md`
-
-The hooks guard rails for rules that live in your `~/.claude/CLAUDE.md`. The rules have to be there or Claude won't know how to comply when a guard fires.
-
-```bash
-cp ~/src/hgore-claude/CLAUDE.md.example ~/.claude/CLAUDE.md            # if you have none
-# otherwise append the "Global rules" section from CLAUDE.md.example
-```
-
 ### Verify
 
 ```bash
@@ -148,7 +136,7 @@ claude --version
 # Then in any repo:
 #   - statusline shows: ctx-usage | dir | branch | model
 #   - /<skill-name> lists brief-author, plan-review-v2, execute-plan, …
-#   - asking Claude to `cat file.md` triggers a permission prompt (block-banned-bash)
+#   - Claude self-invoking /open-pr surfaces a permission prompt (block-self-scheduling)
 ```
 
 ## How the flow runs in practice
@@ -162,22 +150,9 @@ claude --version
 
 When a review returns **NEEDS USER INPUT**, `/explain-blockers` triages the blockers into plain-language decisions, or `/solve-blockers` researches each to a recommended fix.
 
-## What the hooks do
-
-**`block-banned-bash.sh`** — a `PreToolUse` matcher on `Bash`. When Claude reaches for a banned form it returns `permissionDecision: "ask"`, surfacing a prompt instead of running silently:
-
-| Banned                                                | Use instead      |
-|-------------------------------------------------------|------------------|
-| `cat`, `head`, `tail`, `less`, `more` for viewing     | **Read**         |
-| `sed`, `awk` for substitutions                        | **Edit**         |
-| `echo > file`, `printf > file`, heredoc-to-file       | **Write**        |
-| Standalone `jq` (the `--jq` flag inside `gh` is fine) | **Read** + parse |
-
-It short-circuits (no prompt) when the leading command is allowlisted — `gh`, `git`, `cargo`, `npm`/`npx`/`pnpm`/`yarn`/`bun`, `node`/`deno`, `python`/`python3`, `pip`, `uv`, `make`/`cmake`, `docker`, `ls`/`cd`/`wc`/`find`/`rg`/`cp`/`mv` — so `cargo test 2>&1 | head` and `gh pr view --jq …` work untouched. To adjust the allowlist, just tell Claude in plain English ("whitelist jq", "add mycli to the hook allowlist") — it edits the regex for you.
+## What the hook does
 
 **`block-self-scheduling.sh`** — a `PreToolUse` matcher on `Bash`/`Skill`/scheduler tools that returns `ask` when Claude tries to **self-invoke** a hard-to-reverse workflow skill (`/open-pr`, `/execute-plan`, `/review-pr-v2`) or a scheduler. A slash command you type yourself doesn't route through the `Skill` tool, so it only fires on Claude's own programmatic chaining — the thing you want a human in the loop for.
-
-> Heads up: even with the rule in `CLAUDE.md` and the hook firing, Claude still reaches for `cat`/`sed`/`echo > file` more than you'd expect. The hook makes that harmless (deny the prompt); treat it as a safety net, not a guarantee.
 
 ## What the statusline does
 

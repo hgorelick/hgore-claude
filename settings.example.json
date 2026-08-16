@@ -6,15 +6,6 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/block-banned-bash.sh"
-          }
-        ]
-      },
-      {
         "matcher": "ScheduleWakeup|CronCreate|Skill",
         "hooks": [
           {
