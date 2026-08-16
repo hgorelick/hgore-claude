@@ -27,6 +27,8 @@ implementation/<chunk>.md ──/plan-author──▶ /plan-review-v2      one c
 
 Each **author** skill writes the artifact, grounding every claim against the repo and self-prosecuting before it emits. Each **review** skill convenes an adversarial tribunal of persona agents (correctness, security, architecture, testing, …) that attack the artifact, file findings with evidence, apply fixes, and return a verdict. `/plan-lint` is the deterministic structural floor the review skills assume has already passed.
 
+**[SDLC.md](./SDLC.md)** explains the methodology behind this — why every layer is authored then adversarially prosecuted, how verdicts converge, and the context-hygiene practice that keeps the reviews honest.
+
 ## What's in here
 
 ```
