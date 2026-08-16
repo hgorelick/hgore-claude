@@ -38,12 +38,12 @@ You re-run a review until it stops finding things. A clean pass means a clean pa
 
 ### Blockers become decisions, decisions become durable
 
-When a review returns NEEDS USER INPUT, you have two skills that turn its blockers into forward motion:
+When a review returns NEEDS USER INPUT, two skills turn its blockers into forward motion, and they run **in sequence — always explain first, then solve**:
 
-- **`/explain-blockers`** triages the open blockers into a short, ordered list of plain-language decisions — linked ones collapsed into a single call, ordered so the top decision unblocks the ones under it, each with a recommended pick. You decide; you don't research.
-- **`/solve-blockers`** does the research instead — it chases each blocker to a concrete, high-confidence recommendation with an evidence trail, then applies the fix on your say-so.
+- **`/explain-blockers`** goes first. It triages the open blockers into a short, ordered list of plain-language decisions — linked ones collapsed into a single call, ordered so the top decision unblocks the ones under it, each with a recommended pick. Now you can see the whole decision landscape before committing to anything.
+- **`/solve-blockers`** goes second. It chases each of those blockers to a concrete, high-confidence recommendation with an evidence trail, then applies the fix on your say-so. It's the research pass, not a substitute for the triage — you run it after `/explain-blockers`, not instead of it.
 
-Either way, the resolution is written to the feature's `decisions.md` — the durable arbitration log. A decision made once stays made. Later layers (and later review rounds) read `decisions.md` and don't re-litigate a `bound` call. That's what stops the pipeline from churning on the same question every time context resets.
+Both write their resolution to the feature's `decisions.md` — the durable arbitration log. A decision made once stays made. Later layers (and later review rounds) read `decisions.md` and don't re-litigate a `bound` call. That's what stops the pipeline from churning on the same question every time context resets.
 
 `/plan-alignment` is the same move applied *before* the engineering plan exists: it lays out two or three architecture directions for an approved brief, each with the tradeoff it commits you to, and records your pick as a bound decision — so the architecture is a choice you made, not a side effect of whichever way a skill happened to draft.
 
@@ -103,7 +103,7 @@ So the rhythm is: clear, author, clear, review, clear, next author, and so on. T
 
 **Two exceptions — do *not* clear before these:**
 
-- **`/explain-blockers`** and **`/solve-blockers`** run *right after* a review that returned NEEDS USER INPUT. They consume that review's verdict and blocker state *in context* to triage or research it. Clear first and you've thrown away the very thing they operate on.
+- **`/explain-blockers`** and then **`/solve-blockers`** run *right after* a review that returned NEEDS USER INPUT, in that order and in the same context. They consume that review's verdict and blocker state *in context* to triage it and then research it. Clear first and you've thrown away the very thing they operate on.
 
 The rule of thumb: clear before anything that **produces or prosecutes an artifact**; stay in context for anything that **acts on the review you just got**.
 
