@@ -1,6 +1,6 @@
 # Ground-truth protocol — verifying claims at write time
 
-Loaded by `/brief-author`, `/engineering-plan-author`, `/plan-author`. The hosting skill calls this protocol after the first-draft prose is in memory but BEFORE emission. Output is a fixed-up draft plus a sidecar artifact recording every claim verified, dropped, or softened.
+Loaded by `/spec-author`, `/brief-author`, `/engineering-plan-author`, `/plan-author`. The hosting skill calls this protocol after the first-draft prose is in memory but BEFORE emission. Output is a fixed-up draft plus a sidecar artifact recording every claim verified, dropped, or softened.
 
 The cost model: every verifiable claim costs one Read or grep call. A 500-line chunk plan with ~80 verifiable claims costs ~80 tool calls at write time. The reviewer skill, prosecuting the same plan with hallucinated anchors, costs ~5 rounds × 5 personas × ~30 calls = ~750 calls plus the user's arbitration time. Front-load the cost.
 
@@ -16,10 +16,10 @@ Substrings that name a specific location in existing code or docs.
 
 | Pattern | Example | Verification |
 |---|---|---|
-| `path:line` | `backend/src/lib/personHydration.ts:215` | `Read` the file at that line; verify the cited construct matches the prose's description |
-| `<path> §<heading>` | `engineering-plan.md §Zero-credit invariant` | `Read` the file; verify the heading exists verbatim |
-| `<file>` (path only) | `backend/scripts/cleanupPersonNames.ts` | `ls` / `Bash test -f`; verify file exists |
-| `<file>:<symbol>` | `personHydration.ts:hydratePersonCredits` | `Read` the file; verify the symbol is defined there |
+| `path:line` | `src/lib/userProfileSync.ts:215` | `Read` the file at that line; verify the cited construct matches the prose's description |
+| `<path> §<heading>` | `engineering-plan.md §Zero-data-loss invariant` | `Read` the file; verify the heading exists verbatim |
+| `<file>` (path only) | `scripts/cleanupUserNames.ts` | `ls` / `Bash test -f`; verify file exists |
+| `<file>:<symbol>` | `userProfileSync.ts:syncUserProfileFields` | `Read` the file; verify the symbol is defined there |
 | `<line range>` | `lines 154-246` | `Read` the file at that range; verify the cited construct spans it |
 
 **Fail action (Class V1):**
@@ -33,13 +33,13 @@ Substrings that name a function, type, constant, helper, GraphQL operation, sche
 
 | Pattern | Example | Verification |
 |---|---|---|
-| Function/helper name | `the existing captureStderr helper` | `grep -rn '\bcaptureStderr\b' backend/` |
-| Type/interface name | `Prisma's generated PersonScalars type` | `grep -rn 'type PersonScalars\b\|interface PersonScalars\b' backend/` |
-| Constant name | `WRITER_FENCE_STALE_AFTER_MS lives in lib/` | `grep -rn 'WRITER_FENCE_STALE_AFTER_MS' backend/src/lib/` |
-| Schema field | `PersonAuditLog.runId` | `Read backend/prisma/schema.prisma`; locate the column in the model |
-| GraphQL operation | `useFollowMutation` | `grep -n 'mutation Follow\b' mobile/src/graphql/operations.graphql` |
-| Test helper | `the existing seedTestDb helper` | `grep -rn 'seedTestDb' backend/src/__tests__/` |
-| Migration filename | `20260421000001_person_wikidata_audit` | `ls backend/prisma/migrations/ \| grep <id>` |
+| Function/helper name | `the existing captureStderr helper` | `grep -rn '\bcaptureStderr\b' src/` |
+| Type/interface name | `the ORM's generated UserProfileScalars type` | `grep -rn 'type UserProfileScalars\b\|interface UserProfileScalars\b' src/` |
+| Constant name | `WRITER_FENCE_STALE_AFTER_MS lives in lib/` | `grep -rn 'WRITER_FENCE_STALE_AFTER_MS' src/lib/` |
+| Schema field | `SyncAuditLog.runId` | `Read` the project's ORM schema file; locate the column in the model |
+| GraphQL operation | `useFollowMutation` | `grep -n 'mutation Follow\b' src/graphql/operations.graphql` |
+| Test helper | `the existing seedTestDb helper` | `grep -rn 'seedTestDb' src/__tests__/` |
+| Migration filename | `20260421000001_profile_sync_audit` | `ls migrations/ \| grep <id>` |
 
 **Fail action (Class V2):**
 - Identifier absent → if the draft's intent is to *introduce* it, move the claim into the §Owns / §Contracts changed / §Acceptance criteria section under the chunk's contract (so the introduction is visible to the reviewer); if the draft's intent is to *reference an existing thing*, drop the claim or substitute the closest existing analog the grep surfaced.
@@ -51,8 +51,8 @@ Substrings that assert a structural fact about existing code: count of writes, p
 
 | Pattern | Example | Verification |
 |---|---|---|
-| "N occurrences of X" | "two writer-fence ticks per hydration" | Read the file; count the actual write sites |
-| "no @@unique constraint on Y" / "@@unique on Y" | "PersonAuditLog has @@unique(actionKey, runId)" | Read schema.prisma; verify the constraint block |
+| "N occurrences of X" | "two writer-fence ticks per sync" | Read the file; count the actual write sites |
+| "no unique constraint on Y" / "unique constraint on Y" | "SyncAuditLog has a unique constraint on (actionKey, runId)" | Read the project's schema definition; verify the constraint block |
 | "X happens before Y" | "the staleness-check fires before the fence-set" | Read the file; verify the source-order |
 | "X is enforced by Y" | "the audit-row write is enforced by tx wrapper" | Read the file; verify the enforcement |
 | "ZERO hits" / "no callers" | "no caller of `oldFn` exists post-refactor" | grep; verify the count |
@@ -68,11 +68,11 @@ Substrings that assert a fact about a sibling document (brief, engineering-plan,
 
 | Pattern | Example | Verification |
 |---|---|---|
-| `decisions.md <date> entry` | `2026-05-02 entry — confirms no Pothos type` | Read decisions.md; locate the date; verify the entry's content matches the citation |
-| `brief Goal` reference | `Goal: "Zero wrong-human links across both starting cohorts"` | Read brief.md §Goals; verify the verbatim quote |
-| `engineering-plan §<heading>` | `engineering-plan.md §Invariants §Zero-credit invariant` | Read engineering-plan.md; verify both nested headings |
-| `CLAUDE.md` rule | `CLAUDE.md §Database Protection rule X` | Read CLAUDE.md; verify the rule exists at the cited section |
-| Project memory | "per project memory `feedback_X.md`" | Read the memory file at `~/.claude/projects/<project>/memory/<file>.md` |
+| `decisions.md <date> entry` | `2026-05-02 entry — confirms no separate GraphQL type` | Read decisions.md; locate the date; verify the entry's content matches the citation |
+| `brief Goal` reference | `Goal: "Zero incorrect entity links across both import batches"` | Read brief.md §Goals; verify the verbatim quote |
+| `engineering-plan §<heading>` | `engineering-plan.md §Invariants §Zero-data-loss invariant` | Read engineering-plan.md; verify both nested headings |
+| `CLAUDE.md` rule | `CLAUDE.md §Testing Conventions rule X` | Read CLAUDE.md; verify the rule exists at the cited section |
+| Project memory | "per your project's conventions (see project memory)" | Read the memory file at `~/.claude/projects/<project>/memory/<file>.md` |
 | Persona file | `personas/testing.md §<rule>` | Read the persona file; verify the rule |
 
 **Fail action (Class V4):**
@@ -87,10 +87,10 @@ Substrings that assert a fact about an external API the chunk integrates with.
 
 | Pattern | Example | Verification |
 |---|---|---|
-| TMDB endpoint shape | `GET /person/{id}/combined_credits` | Verify against `developer.themoviedb.org` (web fetch if necessary) OR existing client code in `backend/src/lib/tmdb.ts` |
-| Open Library endpoint | `/works/<key>.json` | Verify against `backend/src/lib/openLibrary.ts` (the project's wrapper is canonical) |
-| Anthropic SDK call shape | `messages.create({ model: ..., system: [...] })` | Verify against `backend/src/lib/llm.ts` (the project's wrapper) and `claude-api` skill if available |
-| Prisma client method | `prisma.$transaction(fn, { isolationLevel })` | Verify in node_modules typings or existing usage |
+| Upstream API endpoint shape | `GET /users/{id}/profile` | Verify against the provider's public API docs (web fetch if necessary) OR existing client code in `src/lib/<api-client>.ts` |
+| Secondary upstream API endpoint | `/records/<key>.json` | Verify against `src/lib/<api-client>.ts` (the project's wrapper is canonical) |
+| LLM API call shape | `messages.create({ model: ..., system: [...] })` | Verify against `src/lib/llmClient.ts` (the project's wrapper) and the `claude-api` skill if available |
+| ORM client method | `db.$transaction(fn, { isolationLevel })` | Verify in node_modules typings or existing usage |
 
 **Fail action (Class V5):**
 - API shape wrong → fix to match the project's wrapper (project wrapper is the canonical contract; external docs are the secondary check).
@@ -106,7 +106,7 @@ Three carve-outs. Each requires the carve-out be explicit in the draft and recor
 
 **Carve-out 2 — Future-tense prescriptions.** Prose that says "the implementer SHALL emit a banner of byte-format X" doesn't claim X exists; it specifies X. The byte-format itself MAY be invented (the chunk owns the format) or MAY echo an existing format (verify if the latter — V2/V3). The author skill flags this distinction when scanning: future-tense modal verbs (`shall`, `must`, `will`, `MUST`) attached to constructs the chunk owns are prescriptions, not anchor claims.
 
-**Carve-out 3 — Draft mode.** Per `A-DRAFT-vs-SHIP`, a quick exploration draft (invocation flag `--draft` or `--no-ground-truth`) skips the protocol entirely. Sidecar marks `authoring_mode: "draft"`. The user must re-invoke without the flag to harden before review.
+**Carve-out 3 — Draft mode.** Per `A-DRAFT-vs-SHIP`, a quick exploration draft (invocation flag `--draft` or `--no-ground-truth`) skips the protocol entirely. Sidecar marks `authoring_mode: "draft"`. A `--draft` artifact is unhardened by choice; downstream reviewers warn rather than refuse.
 
 ---
 
@@ -118,7 +118,15 @@ The hosting skill runs this AFTER first-draft prose is in memory and BEFORE the 
 
 2. **Skip carve-outs.** For each entry, check whether the claim falls under Carve-out 1 (identifier appears in §Owns / §Contracts / §Acceptance), Carve-out 2 (future-tense prescription on a chunk-owned construct), or Carve-out 3 (draft mode). If yes, mark `verification_status: skipped_<carve_out_id>` and continue.
 
-3. **Execute verification calls.** Run the verification command for each remaining claim. Batch by file: every Class V1-V5 claim referencing the same file gets ONE Read of that file, scanned in-context. (V5 claims about external APIs almost always resolve to the project's wrapper file in `backend/src/lib/`, so they batch with V2 claims that already touched that wrapper.) Cross-file Class V2 grep can be batched with `&&`-separated greps in one Bash call.
+3. **Execute verification calls — delegated to haiku verifier batches.** Per `_review-common/principles.md` § Station model policy, the mechanical checks run in `model: "haiku"` subagents, NOT in the author's main thread. Two reasons: the checks are pure existence/quote verification (no judgment), and running them inline floods the expensive main thread's context with file contents that are needed only long enough to produce a one-line verdict.
+
+   - **Partition the queue into batches by file locality** (~15–25 claims per batch; every claim referencing the same file lands in the same batch so that file is Read once). Spawn one `general-purpose` agent per batch with `model: "haiku"`, all in parallel.
+   - **Each verifier's prompt** contains its batch of `(line_number, claim_text, class, verification_command)` entries and instructs: run each verification (Read / grep / ls per the class tables above); return per claim `{line, claim, class, check: "holds" | "fails" | "differs", evidence: "<verbatim grep hit or Read quote with path:line>"}`. Verifiers report facts only — they do NOT decide outcomes, propose edits, or touch the draft. `check: "differs"` means the referent exists but not as described (wrong count, drifted line, renamed heading), with the observed reality quoted in `evidence`.
+   - **Keep in the main thread:** claims whose verification needs WebFetch (rare V5 cases with no project wrapper), and any claim the verifier returns with ambiguous evidence — re-verify those inline before deciding.
+   - **The main thread maps checks to outcomes.** `holds` → `verified` (or `verified_softened` when the drift-hardening rule applies); `fails`/`differs` → the class's fail action (`corrected` / `dropped` / `restructured`) — these are judgment calls and stay at the session model. The verifier's `evidence` field is copied verbatim into the `ground_truth_log`.
+   - **Record `ground_truth_model: "haiku"`** in the sidecar (alongside the fields in step 6) so the delegation is auditable. If verification ran inline (e.g., a tiny queue where spawn overhead exceeds the savings — under ~10 claims total), record the model actually used.
+
+   The downstream guard for verifier error is already in place: self-prosecution personas can file `exclusion_challenge` findings against wrong `ground_truth_log` entries, and the orchestrator re-verifies each challenge itself. A rising upheld-challenge rate after this delegation is the signal to revisit the haiku pin — check `sidecar.exclusion_challenges` before assuming the tier is fine.
 
 4. **Record outcomes.** For each claim:
    - `verified` — claim survives verification verbatim. No edit.
@@ -136,6 +144,7 @@ The hosting skill runs this AFTER first-draft prose is in memory and BEFORE the 
      "artifact_path": "<original path>",
      "authoring_mode": "ship | draft",
      "ground_truth_at": "<ISO 8601 UTC>",
+     "ground_truth_model": "<model the verification batches ran on — haiku unless inline>",
      "claims_total": <int>,
      "claims_verified": <int>,
      "claims_verified_softened": <int>,

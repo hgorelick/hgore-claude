@@ -1,14 +1,16 @@
 ---
 name: execute-plan
-description: Implement a passed chunk plan end-to-end — TDD-first, Factoring-Contract-respecting, decisions-conformant, PR-ready. Reads the chunk plan as the contract; reads `decisions.md > engineering-plan.md > chunk plan > brief.md` in authority order. Status frontmatter is binary: refuses on `Status: needs-user-input` (mid-cycle author state) and on a plan-author sidecar reporting `authoring_mode: "draft"`; everything else proceeds. Stages run sequentially with hard gates between them: State load + authority-stack read; Context-pack ingest of every file the plan names; Pre-implementation gates (`/plan-lint` + baseline test/typecheck/lint health + HEAD record); Test-first authoring of every "Tests to add" case (confirm RED); Minimal implementation to GREEN; Acceptance-criteria observation; Pre-PR verification (typecheck / lint / test / `/plan-lint`); user invokes `/open-pr` next, then `/review-pr-v2`. Honors decisions.md / engineering-plan.md as bound — surfaces would-be amendments as `OPEN_QUESTION` rather than auto-editing. Out-of-scope is binding; pre-existing failures are zero-tolerance per CLAUDE.md. Sister to the author-side trio (`/brief-author`, `/engineering-plan-author`, `/plan-author`); pairs with `/review-pr-v2` for post-execution review.
+description: Implements a reviewed chunk plan end-to-end — TDD-first, contract-respecting, PR-ready — treating the plan as binding and surfacing would-be amendments as blockers instead of editing them. When the project provides a worktree bootstrap script, runs inside an isolated worktree. Use after `/plan-review-v2` approves; it auto-opens the chunk's PR on a clean (COMPLETE) verdict.
 user-invocable: true
 ---
 
 # Execute Plan — TDD-First Chunk Implementation
 
-Once a chunk plan has been authored by `/plan-author` and reviewed by `/plan-review-v2` (both APPROVED), the contract is set and the on-disk file has no `Status:` frontmatter (the author skill removes it on a successful APPROVED emission). This skill drives the implementation through TDD with the Factoring Contract enforced at every gate, and hands off to `/open-pr` + `/review-pr-v2`. Never edits the plan; never edits decisions.md without surfacing as `OPEN_QUESTION`; never weakens tests to pass.
+Once a chunk plan has been authored by `/plan-author` and reviewed by `/plan-review-v2` (both APPROVED), the contract is set and the on-disk file has no `Status:` frontmatter (the author skill removes it on a successful APPROVED emission). This skill drives the implementation through TDD with the Factoring Contract enforced at every gate, then auto-opens the chunk's PR into `main` on a clean (COMPLETE) verdict; the user runs `/review-pr-v2` next in a fresh context. Never edits the plan; never edits decisions.md without surfacing as `OPEN_QUESTION`; never weakens tests to pass.
 
 This is the implementer-side analog of `/plan-author` (the author-side). It exists because chunk plans are written for an implementer with no context — and Claude is that implementer. The skill exists to formalize the discipline that "implement it" prompts leave implicit.
+
+**Model policy.** Per `~/.claude/skills/_review-common/principles.md` § Station model policy, this is a `sonnet`-tier station: the passed chunk plan is precisely the contract that makes execution not need the frontier model. The skill runs inline, so the tier is set at invocation — the factory invokes `claude -p --model sonnet "/execute-plan …"`; interactive runs ride the session model (running an expensive session model here spends judgment-tier tokens on work the pipeline already de-skilled). This is guidance for the invoker, not a gate — the skill proceeds on whatever model it finds itself on.
 
 ## Shared scaffolding
 
@@ -21,15 +23,18 @@ This is the implementer-side analog of `/plan-author` (the author-side). It exis
 
 `$ARGUMENTS` (one of):
 
-- `<chunk-slug>` — kebab-case slug; resolved to `features/*/implementation/<slug>.md` if exactly one match exists. Ambiguous → ask which feature.
-- `features/<feature>/implementation/<slug>.md` — explicit path.
-- `<path>.md` — any chunk plan path; freestanding `.scratch/*.md` plans are accepted (they have no decisions.md / engineering-plan.md authority sources).
-- (no argument) — list `features/*/implementation/*.md` whose frontmatter does NOT have `Status: needs-user-input` (i.e., not mid-cycle), ask which to execute.
+- `<chunk-slug>` — kebab-case slug; resolved by globbing `features/*/implementation/{<slug>,[0-9]*-<slug>}.md` AND `features/*/plans/*/implementation/{<slug>,[0-9]*-<slug>}.md` (the `NN-` creation-index prefix `/plan-author` assigns) if exactly one combined match exists. Ambiguous → ask which feature, naming the track where the feature is tracked.
+- `<plan-root>/implementation/<NN>-<slug>.md` — explicit path (legacy unprefixed `<slug>.md` also accepted).
+- `<path>.md` — any chunk plan path; freestanding `.scratch/*.md` and git-tracked `fixes/*.md` one-off plans are accepted (they have no decisions.md / engineering-plan.md authority sources).
+- (no argument) — list `features/*/implementation/*.md` and `features/*/plans/*/implementation/*.md` whose frontmatter does NOT have `Status: needs-user-input` (i.e., not mid-cycle), ask which to execute.
+
+**Plan-root resolution.** Per `~/.claude/skills/_plan-common/layout.md`, a feature is **flat** (`implementation/` under `features/<feature>/`) or **tracked** (`features/<feature>/plans/<track>/implementation/`). **`<plan-root>`** below is whichever directory holds the engineering plan indexing this chunk. `brief.md` and `decisions.md` are always at the feature root, shared by every track.
 
 Optional flags:
 
-- `--no-pr` — stop before invoking `/open-pr`; leave working tree dirty for the user to inspect.
-- `--no-review` — stop after `/open-pr` succeeds; do not invoke `/review-pr-v2`.
+- `--no-pr` — skip the auto-open; leave the working tree dirty for the user to inspect (they open the PR manually with `/open-pr`).
+- `--no-review` — no-op, retained for back-compat: `/execute-plan` never auto-runs `/review-pr-v2` regardless.
+- `--no-worktree` — (when your project provides a worktree bootstrap script) skip **Worktree provisioning** and run implementation in the current checkout. Use when you deliberately want to work in place — e.g. a trivial fix, or you are already set up in the tree you want to build in.
 - `--resume` — explicit signal that implementation was previously started (e.g., a prior `/execute-plan` was interrupted). Skip re-running already-completed acceptance criteria; pick up where the chunk plan's checklist last marked done.
 
 ## Workflow
@@ -41,11 +46,11 @@ Authority-stack read          (deterministic; reads decisions.md, engineering-pl
   ↓
 Context-pack ingest           (deterministic; Reads every file the plan names)
   ↓
-Pre-implementation gates      (deterministic)
-  ↓ Gate 1: /plan-lint clean
-  ↓ Gate 2: baseline typecheck/lint/test green (scoped by Owns set)
-  ↓        baseline RED → REFUSE (zero-tolerance for pre-existing failures)
-  ↓ Gate 3: HEAD recorded (re-checked at AC sweep + pre-/open-pr)
+Worktree provisioning         (when a bootstrap script exists; creates an isolated worktree off origin/main — own dev stack/deps/data)
+  ↓ every stage below re-anchors to .worktrees/<slug>; skipped with --no-worktree or when already in a linked worktree
+HEAD record                   (deterministic; instant)
+  ↓ git rev-parse HEAD recorded (re-checked at AC sweep + pre-/open-pr)
+  ↓ (plan-readiness re-lint + baseline suite intentionally skipped — trusted-plan fast path)
 Test-first authoring          (LLM judgment, applies edits)
   ↓ writes every "Tests to add" case from the plan; runs the suite; expects new tests to FAIL (RED)
 Minimal implementation        (LLM judgment, applies edits)
@@ -56,13 +61,12 @@ Acceptance-criteria sweep     (LLM judgment + deterministic verification)
 Pre-PR verification           (deterministic gates)
   ↓ typecheck = 0 errors; lint = clean; full test suite = green; /plan-lint = clean
   ↓ HEAD re-check before hand-off
-Hand off to /open-pr          (skill tool invocation by main-thread agent)
-  ↓ unless --no-pr; /open-pr is autonomous and reads the working tree
-Hand off to /review-pr-v2     (skill tool invocation by main-thread agent)
-  ↓ unless --no-review; /review-pr-v2 reads the current branch's PR via gh
+Auto-open the PR (inline)     (git + gh directly, NOT the /open-pr skill; only on a COMPLETE verdict)
+  ↓ unless --no-pr; skipped on a BLOCKED verdict — the blocker is surfaced instead
+Stop                          (user starts /review-pr-v2 in a fresh context — never auto-run)
 ```
 
-There is no inner loop within a single skill invocation. If the user discovers an issue mid-implementation that requires re-planning, the skill stops, surfaces the finding as `OPEN_QUESTION` (or `PLAN_AMENDMENT_NEEDED` when the chunk plan itself is wrong), and the user re-invokes `/plan-author --rewrite` or escalates to `/engineering-plan-author --rewrite` per the standard re-planning path.
+There is no inner loop within a single skill invocation. If the user discovers an issue mid-implementation that requires re-planning, the skill stops, surfaces the finding as `OPEN_QUESTION` (or `PLAN_AMENDMENT_NEEDED` when the chunk plan itself is wrong), and the user re-invokes `/plan-author` or escalates to `/engineering-plan-author` per the standard re-planning path.
 
 ---
 
@@ -83,7 +87,7 @@ There is no inner loop within a single skill invocation. If the user discovers a
   the `## Pending blockers` section. Implementing a partial draft would lock in
   product/architecture decisions the user is still arbitrating.
 
-  Resolve the blockers in `## Pending blockers`, then re-invoke `/plan-author --rewrite
+  Resolve the blockers in `## Pending blockers`, then re-invoke `/plan-author
   <feature>/<chunk-slug>`. The author skill removes the `Status:` frontmatter on a
   successful APPROVED emission; re-invoke `/execute-plan` once the plan is back to
   no-Status-field state.
@@ -101,7 +105,7 @@ There is no inner loop within a single skill invocation. If the user discovers a
   `/plan-author --draft` was invoked. Plan-lint, Ground-truth audit, and Self-prosecution
   were all skipped. Implementing a draft plan would ship hallucinations.
 
-  Re-invoke `/plan-author --rewrite <feature>/<chunk-slug>` without `--draft`, then
+  Re-invoke `/plan-author <feature>/<chunk-slug>` without `--draft`, then
   `/plan-review-v2`, then `/execute-plan`.
   ```
 
@@ -119,8 +123,8 @@ The Status check is deterministic and runs first.
 
 The plan has explicit upstream authority sources. The implementer must Read them in order, top to bottom:
 
-1. **`features/<feature>/decisions.md`** (if the chunk plan is under `features/`) — durable arbitration record. Bound entries CANNOT be contradicted by the implementation. If the chunk plan asserts something contradicting a bound decision, this is a chunk-plan defect surfaced via `PLAN_AMENDMENT_NEEDED`; stop and ask the user to re-invoke `/plan-author --rewrite`. Skip if the file does not exist (freestanding plans).
-2. **`features/<feature>/engineering-plan.md`** (if the chunk plan is under `features/`) — chunk DAG, cross-chunk invariants, decisions closure. Verify:
+1. **`features/<feature>/decisions.md`** (if the chunk plan is under `features/`) — durable arbitration record. Bound entries CANNOT be contradicted by the implementation. Only Active-section `Status: bound` entries are authoritative — a `superseded`/`obsolete` entry in the `## Archived` tail does not bind, so read the `## Active (bound)` section (per `~/.claude/skills/_review-common/principles.md` § What counts as a bound entry). If the chunk plan asserts something contradicting a bound decision, this is a chunk-plan defect surfaced via `PLAN_AMENDMENT_NEEDED`; stop and ask the user to re-invoke `/plan-author`. Skip if the file does not exist (freestanding plans).
+2. **`<plan-root>/engineering-plan.md`** (if the chunk plan is under `features/`) — chunk DAG, cross-chunk invariants, decisions closure. Verify:
    - The chunk's slug appears in the chunk index.
    - The chunk's `Code deps` (other slugs) are either already shipped on `main` (check git log) OR present in the working directory's prior chunks already merged. Unmet deps → stop and surface.
    - Cross-chunk invariants in the engineering plan's Invariants section apply to this chunk's implementation.
@@ -131,7 +135,7 @@ The plan has explicit upstream authority sources. The implementer must Read them
 
 Note that *authority order* is not the same as *read order*. The implementer reads top-down (brief first to set the "why", then the engineering plan, the chunk plan, decisions.md), but applies arbitration bottom-up: when two artifacts disagree, the lower-numbered (more authoritative) wins. This is consistent across `/brief-review-v2`, `/engineering-plan-review-v2`, `/plan-review-v2`, and this skill — every layer reads upstream context first but defers to the bound-arbitration record (`decisions.md`) when conflicts surface.
 
-If the chunk plan asserts something contradicting an upstream source, this is a chunk-plan defect. Surface as `PLAN_AMENDMENT_NEEDED`; do NOT auto-fix. The user re-invokes `/plan-author --rewrite` to land the corrected plan.
+If the chunk plan asserts something contradicting an upstream source, this is a chunk-plan defect. Surface as `PLAN_AMENDMENT_NEEDED`; do NOT auto-fix. The user re-invokes `/plan-author` to land the corrected plan.
 
 If two upstream sources contradict each other (e.g., decisions.md says X, engineering-plan.md says Y), surface as `OPEN_QUESTION` — implementation cannot proceed without arbitration.
 
@@ -150,60 +154,52 @@ If the Context pack omits files the implementation will obviously need (e.g., th
 
 ---
 
-## Pre-implementation gates (MANDATORY, DETERMINISTIC)
+## Worktree provisioning (when your project provides a worktree bootstrap script, MANDATORY when applicable)
 
-Run these gates in order. Each must pass before the next runs. Any FAIL stops the skill before any implementation begins.
+When your project provides a worktree bootstrap script, `/execute-plan` never runs implementation in the primary checkout. Everything from HEAD record onward runs inside a dedicated, isolated worktree created off `origin/main` via that script — its own dev services stack (isolated database container / volume / port), its own dependencies, and a fresh copy of any seed data. This keeps `main` clean, lets parallel `/execute-plan` sessions run without colliding on shared state, and gives every chunk a runnable environment for state-touching tests.
 
-### Gate 1: /plan-lint
+State-load, Authority-stack read, and Context-pack ingest (above) run in the **invocation checkout** — they only Read inputs. Provisioning happens here; every stage below re-anchors to the worktree.
 
-```bash
-python3 ~/.claude/skills/plan-lint/lint.py <chunk-plan-path>
-```
+### When it runs
 
-The chunk plan should have already passed `/plan-lint` at author/review time. Re-running is a defensive check — if the user edited the plan since review (legitimately fixing a typo, or illegitimately weakening a Factoring Contract field), the lint will catch it. FAIL → stop and surface `STRUCTURAL_LINT_FAILED` with the lint output.
+All three conditions must hold; otherwise this stage is a no-op and execution proceeds in place:
 
-### Gate 2: Baseline test/typecheck health (zero-tolerance for pre-existing failures)
+- **Project provides a worktree bootstrap script** — an executable bootstrap script exists at the repo root (`git rev-parse --show-toplevel`). In any project without one, this whole stage is skipped (the skill is global).
+- **Not already inside a linked worktree** — `git rev-parse --git-dir` equals `git rev-parse --git-common-dir` (i.e., the primary working tree). If they differ, the session is already in a `.worktrees/<name>` worktree; it is already isolated, so proceed in place without nesting.
+- **`--no-worktree` was not passed.**
 
-Per `CLAUDE.md`'s zero-tolerance rule, the codebase must be green BEFORE implementation begins. Run:
+### Steps
 
-```bash
-cd backend && npm run typecheck
-cd backend && npm run lint
-cd backend && npm test
-cd mobile && npm run lint
-cd mobile && npm test
-```
+Let `SLUG` = the chunk's prefix-free slug (the same slug used for the H1 / branch, NOT the `NN-` filename prefix; for `.scratch/` / `fixes/` plans use the plan's basename slug); `MAIN_ROOT` = `git rev-parse --show-toplevel`; `WT_SCRIPT` = the project's worktree bootstrap script, at `$MAIN_ROOT`; `WT_PATH` = `$MAIN_ROOT/.worktrees/$SLUG`.
 
-(Adjust commands per the project's actual scripts — read `package.json` first if commands differ.)
+1. **Existing-worktree guard.** If `$WT_PATH` already exists:
+   - `--resume` → adopt it: re-anchor to `$WT_PATH`, confirm its checked-out branch is `SLUG`, skip creation, continue at HEAD record.
+   - otherwise → REFUSE `WORKTREE_EXISTS` (a prior run's worktree is still on disk; run `/cleanup-worktree <SLUG>` first, or pass `--resume`).
+2. **Sync + pin the base.** `git -C "$MAIN_ROOT" fetch origin main`. Then pin the branch to `origin/main` explicitly rather than forking off whatever the shared checkout currently has checked out — a concurrent session may have moved the primary tree's HEAD (the shared-tree branch-creation race): `git -C "$MAIN_ROOT" branch "$SLUG" origin/main`. If that branch already exists with no worktree (a leftover from an aborted create), reuse it under `--resume`; otherwise REFUSE `BRANCH_EXISTS`.
+3. **Provision.** `"$WT_SCRIPT" create "$SLUG"`. Because the branch already exists at `origin/main`, the bootstrap script checks it out into `$WT_PATH` (it does NOT fork a new branch off HEAD), then builds the isolated dev stack, installs dependencies, restores any seed data, applies pending migrations, and seeds. **This takes a few minutes** — it is heavy by design. A non-zero exit means the bootstrap script already auto-rolled-back its partial state; surface its stderr as `WORKTREE_PROVISION_FAILED` and stop.
+4. **Verify base == origin/main.** `git -C "$WT_PATH" rev-parse HEAD` MUST equal `git -C "$MAIN_ROOT" rev-parse origin/main`. Mismatch → REFUSE `WORKTREE_BASE_DRIFT`, tear the worktree down (`/cleanup-worktree <SLUG>`), and stop. This is the "verify the new base == `origin/main`" gate the shared-tree race demands.
+5. **Re-anchor.** Set the working directory to `$WT_PATH` for every subsequent stage. All `npm run lint|typecheck|test`, all DB access, `/plan-lint`, `/open-pr`, and `/review-pr-v2` run from inside `$WT_PATH` against its isolated backend/mobile and its own database.
 
-- **All green** → record baseline; proceed.
-- **Any RED** → stop. Per CLAUDE.md zero-tolerance rule, "every session should leave the codebase strictly better than you found it" — accepting a RED baseline means the implementation's later RED-then-GREEN cycle cannot distinguish the new failure from the pre-existing one. Surface as `BASELINE_RED`:
+### Plan file location
 
-  ```
-  STATUS: REFUSED (baseline RED — pre-existing failures)
+Chunk plans live under `features/` on `main`, so a worktree off `origin/main` contains the plan and its full authority stack (decisions.md / engineering-plan.md / brief.md) at the same relative paths — Context-pack, `/plan-lint`, and every reference resolve inside the worktree unchanged. If the plan being executed is NOT yet merged to `main` (authored on a branch and not merged), the fresh worktree will lack it: reference the plan by its absolute path in the primary tree for `/plan-lint`, and surface a SOFT note that the plan should land on `main` before or with this chunk.
 
-  Per CLAUDE.md § Pre-Existing Failures, the codebase must be green before
-  implementation begins. The following gates failed on the current HEAD:
+### After merge
 
-  - <command>: <one-line failure summary>
-  - <command>: <one-line failure summary>
+Once the chunk's PR is merged, tear the worktree down with `/cleanup-worktree <SLUG>` (removes the worktree, its isolated dev stack, and the local branch). `/execute-plan` does NOT clean up — the worktree must survive for `/open-pr` + `/review-pr-v2` + merge.
 
-  Per zero-tolerance rule, fix the pre-existing failures FIRST (separate from
-  this chunk's work — they are not "out of scope"), then re-invoke /execute-plan.
-  ```
+---
 
-  This is the same discipline `/review-pr-v2` enforces at PR-review time, applied at execution time.
+## HEAD record (MANDATORY, DETERMINISTIC)
 
-**Scoping by Owns set.** If every entry in the chunk plan's `Owns (writes)` set is under `backend/`, run only the `backend/` gates; if every entry is under `mobile/`, run only the `mobile/` gates; otherwise run both. The Pre-PR verification stage at the end of the skill always runs the full local CI equivalent regardless — Gate 2 is the cheap baseline check, Pre-PR verification is the comprehensive shipping gate.
-
-### Gate 3: HEAD record + checkpoints
-
-`git rev-parse HEAD` once and record. The HEAD SHA is re-checked at three later points:
+`git rev-parse HEAD` once and record. When a worktree was provisioned, this runs inside it (`.worktrees/<SLUG>`), so the recorded SHA is the worktree branch's tip — which the provisioning gate proved equals `origin/main`. The HEAD SHA is re-checked at two later points:
 
 - **Entry to Acceptance-criteria sweep** — the implementer is finished writing code; if HEAD has moved (a parallel worktree committed; the user pulled main), the implementation is now against a stale base.
 - **Immediately before invoking `/open-pr`** — last chance to detect drift before the PR opens against the wrong base.
 
 Drift at any checkpoint → surface `REPO_STATE_DRIFT` with both SHAs and stop. The skill does NOT auto-restart — the user re-invokes against the new HEAD after deciding whether to rebase or abort.
+
+**Plan-readiness re-lint and baseline health are intentionally NOT run here.** `/execute-plan` trusts that the plan is already good-to-go: `/plan-lint` and full-prosecution review (`/plan-review-v2`) ran at author/review time, so re-running `/plan-lint` is redundant, and running the full baseline typecheck/lint/test suite up front just duplicates the Pre-PR verification suite that runs before the PR opens. Pre-PR verification is the real correctness gate; a pre-existing failure surfaces there (see **Pre-existing failures** under Hard rules). The State-load `Status: needs-user-input` and draft-sidecar refusals still run — they are instant and catch a mis-invocation against a mid-cycle or unhardened plan.
 
 ---
 
@@ -263,11 +259,11 @@ The chunk plan's Factoring Contract section enumerates:
 - **Owns (writes)** — exact paths this chunk creates or modifies. Edits outside Owns are forbidden. The label matches the chunk template (`features/_template/chunk.md`) verbatim.
 - **Reads (no writes)** — files this chunk depends on but does NOT modify. If implementation requires modifying a file in Reads, that's a Factoring Contract violation; surface as `PLAN_AMENDMENT_NEEDED`. The label matches the chunk template verbatim.
 - **Forbidden** — files / patterns / abstractions explicitly out of bounds.
-- **Single concern** — the chunk does ONE thing. If implementation requires doing two things, decompose at chunk-plan level (re-invoke `/engineering-plan-author --rewrite` to split the chunk).
+- **Single concern** — the chunk does ONE thing. If implementation requires doing two things, decompose at chunk-plan level (re-invoke `/engineering-plan-author` to split the chunk).
 - **No scaffolding** — don't create premature abstractions; the chunk has < 2 already-merged consumers means the abstraction is invalid (per `/plan-lint`).
 - **Abstraction earns its place** — extract only when there's a concrete second consumer.
 
-The Factoring Contract is machine-checked at `/plan-lint` time and re-checked at `/review-pr-v2` time. Violating it during implementation is a forbidden operation; if the implementation truly requires it, the chunk plan is wrong and the user re-invokes `/plan-author --rewrite`.
+The Factoring Contract is machine-checked at `/plan-lint` time and re-checked at `/review-pr-v2` time. Violating it during implementation is a forbidden operation; if the implementation truly requires it, the chunk plan is wrong and the user re-invokes `/plan-author`.
 
 ### TDD cycle
 
@@ -282,11 +278,11 @@ For each test case (or related cluster):
 - Modifying tests to make them pass. Tests are the spec; if a test is wrong, it's a chunk-plan defect → `PLAN_AMENDMENT_NEEDED`.
 - Adding `.skip()` / `.todo()` to silence a failing test (per CLAUDE.md "Forbidden Test Modifications").
 - Editing files outside the Factoring Contract's Owns set.
-- Editing `decisions.md` (only `/plan-author --rewrite`, `/engineering-plan-author --rewrite`, or manual user action edits decisions.md).
+- Editing `decisions.md` (only `/plan-author`, `/engineering-plan-author`, or manual user action edits decisions.md).
 - Editing `engineering-plan.md` (frozen once approved per `features/README.md`).
-- Editing the chunk plan itself (the implementer never edits the contract; the user re-invokes `/plan-author --rewrite` if the plan is wrong).
+- Editing the chunk plan itself (the implementer never edits the contract; the user re-invokes `/plan-author` if the plan is wrong).
 - Bypassing dependency conflicts with `--legacy-peer-deps` or `--force` (per CLAUDE.md "Package Management").
-- Running `prisma migrate dev` directly (per CLAUDE.md "Database Protection"; use `npm run db:migrate`).
+- Running a destructive/interactive schema-migration command directly (per CLAUDE.md's database-protection rules; use the project's safe migration wrapper).
 
 ### Allowed during implementation
 
@@ -317,8 +313,8 @@ Output a per-item table:
 | Item | Mechanism | Result | Notes |
 |---|---|---|---|
 | 1. `npm run typecheck` reports 0 errors in `backend/` | typecheck | PASS | — |
-| 2. New `searchAuthors` query returns ≥1 hit for "Jane Doe" | integration test | PASS | `__tests__/searchAuthors.test.ts` |
-| 3. Existing watchlist test still passes | regression | PASS | full suite green |
+| 2. New `searchContacts` query returns ≥1 hit for "Jane Doe" | integration test | PASS | `__tests__/searchContacts.test.ts` |
+| 3. Existing checkout test still passes | regression | PASS | full suite green |
 | ... | ... | ... | ... |
 ```
 
@@ -341,8 +337,10 @@ python3 ~/.claude/skills/plan-lint/lint.py <chunk-plan-path>
 
 (Adjust commands per the project's actual scripts.)
 
-- **All green** → proceed to /open-pr.
+- **All green** → proceed to the auto-open.
 - **Any RED** → fix and re-run. Do NOT push code that will fail CI.
+
+Because `/execute-plan` no longer runs an upfront baseline, this full-suite run is also where any *pre-existing* failure first surfaces. Before treating a RED as a regression from this chunk, check whether it lives in a test unrelated to the diff's touched files — if so, it is a pre-existing failure to fix per zero-tolerance (§ Hard rules § Pre-existing failures), not a regression.
 
 If a regression appears that the new tests don't cover (the implementation broke a pre-existing test):
 
@@ -355,21 +353,24 @@ Never weaken or skip a failing pre-existing test to make implementation pass.
 
 ---
 
-## Hand off to /open-pr
+## Auto-open the PR (inline)
 
-`/open-pr` is autonomous — it takes no arguments, reads the working tree, decides the commit-chunking, drafts the PR title/description from the diff content, pushes the branch, and runs `gh pr create`. `/execute-plan`'s job is to leave the working tree in a state that `/open-pr` can ship cleanly:
+On a **COMPLETE** verdict, `/execute-plan` opens the chunk's PR into `main` **automatically and inline** — it runs the `git` / `gh` steps directly and does **NOT** invoke the `/open-pr` skill. Going through Bash keeps this out of `~/.claude/hooks/block-self-scheduling.sh` (which guards only the `Skill` tool), so no confirm prompt fires. This is a sanctioned auto-open, per your project's conventions.
 
-- Implementation complete (every Acceptance criterion observed PASS).
-- Pre-PR verification green (typecheck / lint / test / `/plan-lint` all clean).
-- Working tree contains ONLY the chunk's intended changes plus any ancillary fixes (per the Allowed-during-implementation rules); no stray files, no leftover debug prints, no `.scratch/` artifacts staged.
+**COMPLETE requires all of:** every Acceptance criterion observed PASS; Pre-PR verification green (typecheck / lint / test / `/plan-lint`); the working tree contains ONLY the chunk's intended changes plus recorded ancillary fixes (no stray files, debug prints, or staged `.scratch/` artifacts).
 
-When the working tree is in that state, the next move is:
+**Gate — do NOT open on a BLOCKED verdict.** If the run surfaced any blocker (`OPEN_QUESTION`, `PLAN_AMENDMENT_NEEDED`, `REPO_STATE_DRIFT`, a RED gate, or an unobserved AC), the verdict is **BLOCKED** — the NEEDS-USER-INPUT equivalent. Skip the auto-open, surface the blocker + its resolution path, and stop. Also skip when `--no-pr` was passed: leave the tree ready and emit the `--no-pr` template below.
 
-```
-[Invoke the Skill tool with skill: open-pr]
-```
+Steps (follow the project's commit/PR conventions — `type: description` commits, no AI-attribution trailer):
 
-The skill invocation pattern in Claude Code is the Skill tool, not programmatic chaining — `/execute-plan` does NOT call `/open-pr` automatically. After this skill emits its verdict, the agent in the main thread invokes `/open-pr` next. (If running in a non-Claude-Code environment, the user runs `/open-pr` manually.) Pass through any `--no-pr` flag by stopping before this hand-off; emit the no-PR verdict template (below) and the user inspects the working tree.
+1. `BRANCH = git rev-parse --abbrev-ref HEAD`; confirm `BRANCH != main` and not detached (normally the `<slug>` worktree branch). On `main` / detached, skip the auto-open and surface why.
+2. **Already-open guard.** `gh pr list --head "$BRANCH" --state open --json number` — if a PR exists, `git push` the new commits to it and report that PR; do NOT open a second.
+3. **Commit** the working tree in logical, atomic chunks (one commit per concern — the chunk's implementation, plus any recorded ancillary fixes).
+4. **Push:** `git push -u origin "$BRANCH"`.
+5. **Open the PR:** `gh pr create --base main --head "$BRANCH" --title "<type>(<scope>): <chunk summary>" --body "<structured body: brief Goals served, acceptance criteria, ancillary fixes; reference the spec.md sections per the brief>"`.
+6. Report the PR URL on the verdict's `**PR opened:**` line.
+
+After the PR is open, **stop** — `/execute-plan` does NOT run `/review-pr-v2`. That review must run in a fresh context, so the user starts it themselves (per your project's conventions; the hook still guards it).
 
 `--no-pr` verdict template (when `/execute-plan` was invoked with `--no-pr`):
 
@@ -382,36 +383,15 @@ Files modified: <count>
 Tests added: <count>
 Acceptance criteria observed: <count>/<total>
 
-Next step: invoke `/open-pr` (Skill tool) to commit and open the PR, or inspect
-the working tree first. /execute-plan stopped before /open-pr per --no-pr flag.
+Next step: run `/open-pr` to commit and open the PR, or inspect the working tree
+first. /execute-plan skipped the auto-open per the --no-pr flag.
 ```
 
 ---
 
-## Hand off to /review-pr-v2
+## After the PR: /review-pr-v2 (user-initiated)
 
-After `/open-pr` returns and the PR exists on GitHub, the next step is `/review-pr-v2` — the post-execution review gate that catches:
-
-- Premise inversions in the diff (claims in code comments / docstrings that don't survive verification).
-- Factoring Contract violations the implementer missed.
-- Gaps in test coverage for behavior the diff introduces.
-- Cross-cutting impact the chunk plan didn't anticipate.
-
-The skill invocation pattern is the same — the agent in the main thread invokes:
-
-```
-[Invoke the Skill tool with skill: review-pr-v2]
-```
-
-after `/open-pr` succeeds. `/review-pr-v2` reads the current branch's PR via `gh pr view`, so it does not need arguments. (`/execute-plan` does NOT chain into `/review-pr-v2` programmatically.)
-
-To detect that `/open-pr` succeeded before invoking the next skill, check the working-tree state: `git rev-parse @{u}` should report the branch is now tracking the remote, and `gh pr view --json url --jq .url` should return a non-empty URL. If `/open-pr` failed (rare; usually a `gh` auth or push issue), surface the failure and do NOT invoke `/review-pr-v2` — the user fixes the underlying issue and re-runs `/open-pr`.
-
-If `/review-pr-v2` returns `APPROVED`, the chunk is shippable. The user can merge.
-
-If `/review-pr-v2` returns `NEEDS USER INPUT`, the verdict surfaces blockers; subsequent fixes go through `/review-pr-v2`'s same-round re-prosecution machinery on the next invocation.
-
-If the user passed `--no-review`, skip this step. The PR is open and unreviewed; the user runs `/review-pr-v2` later.
+Once the PR is open, the next step is `/review-pr-v2` — the post-execution review gate that catches premise inversions in the diff, Factoring-Contract violations the implementer missed, test-coverage gaps, and cross-cutting impact the chunk plan didn't anticipate. `/execute-plan` does **NOT** run it. The review must be independent of the session that wrote the code, so the user clears context and starts `/review-pr-v2` themselves (per your project's conventions; `block-self-scheduling.sh` guards the skill). It reads the current branch's PR via `gh pr view` and takes no arguments. The `--no-review` flag is now a no-op — there is no auto-review to suppress.
 
 ---
 
@@ -427,10 +407,9 @@ If the user passed `--no-review`, skip this step. The PR is open and unreviewed;
   - brief.md: <Goals served: N>
   - chunk plan: <ACs: N>
 
-**Pre-implementation gates:**
-  - /plan-lint: PASS
-  - Baseline test/typecheck/lint: PASS (scoped to <backend / mobile / both>)
-  - HEAD record: <sha at start>; checkpoints (AC-sweep entry, pre-/open-pr): <unchanged | DRIFT detected → REPO_STATE_DRIFT>
+**Worktree:** <`.worktrees/<slug>` (off origin/main, isolated dev stack) | skipped (--no-worktree) | in-place (already in linked worktree) | n/a (no worktree bootstrap script)>
+
+**HEAD record:** <sha at start>; checkpoints (AC-sweep entry, pre-/open-pr): <unchanged | DRIFT detected → REPO_STATE_DRIFT>
 
 **Test-first:** <N tests added>; all RED before implementation
 **Implementation:** <files modified: N>; Factoring Contract honored: <Owns-only edits: bool>
@@ -442,8 +421,7 @@ If the user passed `--no-review`, skip this step. The PR is open and unreviewed;
 **Ancillary fixes (pre-existing issues fixed in passing):** <N>
   - <one-line per fix>
 
-**PR opened:** <PR URL or "skipped (--no-pr)">
-**/review-pr-v2 verdict:** <APPROVED | NEEDS USER INPUT | "skipped (--no-review)">
+**PR opened:** <PR URL | "skipped (--no-pr)" | "not opened — BLOCKED">
 
 ### Status: COMPLETE / BLOCKED
 
@@ -456,51 +434,53 @@ If the user passed `--no-review`, skip this step. The PR is open and unreviewed;
 
 - **Status check is mandatory and runs first.** `Status:` is a binary mid-cycle signal: `needs-user-input` → REFUSE; absent or anything else → proceed (subject to the sidecar draft check). The plan-author sidecar's `authoring_mode: "draft"` field is the unhardened-plan signal that also REFUSES. Lifecycle states (in-progress, merged, verified) are derived from branch / PR / merge state, not frontmatter.
 - **Authority-stack read is mandatory.** Read decisions.md, engineering-plan.md, brief.md, and the chunk plan in that order. Authority order when conflicts surface (highest to lowest): `decisions.md > engineering-plan.md > chunk plan > brief.md`. The chunk plan is the contract; the upstream artifacts are the constraints.
-- **Pre-implementation gates are mandatory.** `/plan-lint` re-check, baseline test/typecheck/lint health (per CLAUDE.md zero-tolerance rule), and HEAD record all pass before any test or implementation code is written.
-- **HEAD record + drift checkpoints are mandatory.** HEAD is captured at Gate 3 and re-checked at the entry to Acceptance-criteria sweep AND immediately before `/open-pr` hand-off. Any drift is `REPO_STATE_DRIFT`; the skill does not auto-restart.
-- **TDD is non-negotiable.** Every "Tests to add" case is written and confirmed RED before the corresponding implementation code is written. Tests are NEVER modified to fit the implementation — if a test is wrong, the chunk plan is wrong and the user re-invokes `/plan-author --rewrite`.
+- **Worktree provisioning is mandatory when your project provides a bootstrap script.** Implementation never runs in the primary checkout: the skill creates an isolated worktree off `origin/main` via that script and re-anchors every write/verify stage (HEAD record through `/open-pr` + `/review-pr-v2`) there. Skipped only with `--no-worktree` or when already inside a linked worktree. The base is pinned to `origin/main` and verified after creation; a mismatch is `WORKTREE_BASE_DRIFT` and stops. In projects without a bootstrap script, the stage is a no-op.
+- **HEAD record is mandatory; plan-readiness re-lint and baseline health are intentionally skipped.** `/execute-plan` trusts the reviewed plan — it does NOT re-run `/plan-lint` or a full baseline typecheck/lint/test suite before implementation. HEAD is recorded for drift detection; the Pre-PR verification full-suite run is the real correctness gate.
+- **HEAD record + drift checkpoints are mandatory.** HEAD is captured at the HEAD-record step and re-checked at the entry to Acceptance-criteria sweep AND immediately before the auto-open. Any drift is `REPO_STATE_DRIFT`; the skill does not auto-restart.
+- **TDD is non-negotiable.** Every "Tests to add" case is written and confirmed RED before the corresponding implementation code is written. Tests are NEVER modified to fit the implementation — if a test is wrong, the chunk plan is wrong and the user re-invokes `/plan-author`.
 - **Tests-as-spec is non-negotiable.** Per CLAUDE.md § Critical Rules item 8 ("Tests are spec") and § Test Removal/Simplification Criteria, tests are not removable or weakenable to make implementation pass. Removing or weakening a test surfaces as `PLAN_AMENDMENT_NEEDED` and stops; the user must justify the removal against spec.md before any test change lands.
 - **Factoring Contract is binding.** Edits outside the chunk plan's `Owns (writes)` set, additions to `Forbidden`, or expansion beyond `Single concern` are forbidden operations; surface as `PLAN_AMENDMENT_NEEDED`. The narrow trivial-fix carve-out (≤3 lines, no behavior change, no test gap) is the only exception.
 - **Out of scope is binding.** The chunk plan's "Out of scope" section names work that explicitly does NOT happen in this chunk; pulling adjacent fixes in is a Factoring Contract violation (modulo the trivial-fix carve-out).
 - **Decisions.md is read-only at execution time.** The implementer never edits `decisions.md`; if a finding requires amending it, surface as `OPEN_QUESTION`.
-- **Engineering-plan.md is read-only at execution time.** Frozen once approved per `features/README.md`. If a finding requires amending it, surface as `OPEN_QUESTION` and the user re-invokes `/engineering-plan-author --rewrite`.
-- **Pre-existing failures are zero-tolerance.** Per CLAUDE.md, "every session should leave the codebase strictly better than you found it." Pre-existing typecheck / lint / test failures are fixed BEFORE the chunk's implementation begins (Gate 2), AND any further pre-existing warnings encountered during Pre-PR verification are also fixed (in touched OR untouched files) and surfaced in the verdict's ancillary-fixes line.
-- **Pre-PR verification is mandatory.** Full local CI equivalent runs before `/open-pr` is invoked.
-- **Package management discipline.** Per CLAUDE.md § Package Management, NEVER use `--legacy-peer-deps` or `--force` to bypass dependency conflicts; resolve them properly. Per § Database Protection, NEVER run `prisma migrate dev`; use `npm run db:migrate`.
-- **Hand-off pattern is non-programmatic.** `/execute-plan` does NOT call `/open-pr` or `/review-pr-v2` programmatically. After Pre-PR verification passes, the agent in the main thread invokes the Skill tool with `skill: open-pr`, then with `skill: review-pr-v2` after the PR opens. `--no-pr` and `--no-review` flags stop the hand-off chain at the corresponding step.
+- **Engineering-plan.md is read-only at execution time.** Frozen once approved per `features/README.md`. If a finding requires amending it, surface as `OPEN_QUESTION` and the user re-invokes `/engineering-plan-author`.
+- **Pre-existing failures are zero-tolerance.** Per CLAUDE.md, "every session should leave the codebase strictly better than you found it." Because the upfront baseline check is skipped, pre-existing typecheck / lint / test failures surface at Pre-PR verification (the full-suite run before `/open-pr`); fix them there — in touched OR untouched files — and surface them in the verdict's ancillary-fixes line. A failure clearly unrelated to the chunk's diff is a pre-existing failure to fix, not a regression from this chunk.
+- **Pre-PR verification is mandatory.** Full local CI equivalent runs before the auto-open.
+- **Package management discipline.** Per CLAUDE.md § Package Management, NEVER use `--legacy-peer-deps` or `--force` to bypass dependency conflicts; resolve them properly. Per § Database Protection, NEVER run a destructive/interactive schema-migration command directly; use the project's safe migration wrapper.
+- **PR is auto-opened inline; review is not.** On a COMPLETE verdict (unless `--no-pr`), `/execute-plan` opens the chunk's PR into `main` itself — inline `git commit` + `git push` + `gh pr create`, **NOT** via the `/open-pr` skill, so `block-self-scheduling.sh` never fires. A BLOCKED verdict skips the auto-open and surfaces the blocker instead. `/execute-plan` does **NOT** run `/review-pr-v2` — that runs in a fresh context the user starts (`--no-review` is now a no-op).
 - **Always** prefer `Read` / `Edit` / `Write` over Bash for file I/O (per global CLAUDE.md tool-selection rule).
 - **Never** mark the chunk implemented while any gate is RED, any AC is unobserved, or any blocker is unresolved.
 
-## Compliance self-check (before invoking /open-pr)
+## Compliance self-check (before the auto-open)
 
 - [ ] Status frontmatter check ran first; not bypassed. Refused on `Status: needs-user-input` (mid-cycle); plan-author sidecar consulted and refused on `authoring_mode: "draft"`; otherwise proceeded.
 - [ ] Authority-stack read complete: decisions.md, engineering-plan.md, brief.md, chunk plan all Read in that order. Authority order applied when conflicts surfaced.
 - [ ] Context-pack ingest complete: every file the plan names was Read.
-- [ ] Pre-implementation gates passed: /plan-lint clean; baseline test/typecheck/lint green; HEAD recorded.
-- [ ] HEAD checkpoints honored: re-checked at Acceptance-criteria entry AND before /open-pr hand-off; no drift detected (or `REPO_STATE_DRIFT` surfaced).
+- [ ] Worktree provisioning (when applicable): isolated worktree created off `origin/main` via the project's bootstrap script and re-anchored to, OR correctly skipped (`--no-worktree` / already in a linked worktree / no bootstrap script). Base verified == `origin/main` when created.
+- [ ] HEAD recorded (drift baseline). Plan-readiness re-lint and baseline suite intentionally skipped (trusted-plan fast path).
+- [ ] HEAD checkpoints honored: re-checked at Acceptance-criteria entry AND before the auto-open; no drift detected (or `REPO_STATE_DRIFT` surfaced).
 - [ ] Test-first: every "Tests to add" case was written and confirmed RED before any implementation. New-test-passing-immediately cases distinguished into (i)/(ii)/(iii) per the disambiguation rule.
 - [ ] Implementation: edits stayed within Factoring Contract `Owns (writes)` set OR within the trivial-fix carve-out (≤3 lines, no behavior change, no test gap); no test modifications.
 - [ ] Tests-as-spec: no test removed, weakened, or skipped to make implementation pass.
 - [ ] Acceptance criteria: every AC item observed PASS.
 - [ ] Pre-PR verification: full local CI equivalent green; ancillary fixes in untouched files (if any) recorded in the verdict.
 - [ ] No edits to decisions.md, engineering-plan.md, or the chunk plan itself.
-- [ ] No --legacy-peer-deps / --force / prisma migrate dev / hook-skipping.
-- [ ] Hand-off pattern honored: ready to invoke `/open-pr` (Skill tool) next; not chained programmatically.
+- [ ] No --legacy-peer-deps / --force / destructive schema-migration commands / hook-skipping.
+- [ ] On COMPLETE: PR auto-opened inline (git + gh, NOT the `/open-pr` skill), with the already-open guard. On BLOCKED or `--no-pr`: auto-open correctly skipped. `/review-pr-v2` NOT auto-run.
 
 ---
 
 ## Edge cases
 
-- **Chunk plan path resolution ambiguous** (multiple `features/*/implementation/<slug>.md` matches): stop and ask which feature.
+- **Chunk plan path resolution ambiguous** (the slug matches in more than one feature, or in more than one track of one feature): stop and ask which, naming feature and track.
 - **Chunk plan exists with no `Status:` frontmatter**: this is the canonical APPROVED state since the Status-binary cleanup. Proceed normally.
-- **Engineering plan declares `Code deps` not yet shipped**: stop. Surface: "this chunk depends on `<other-slug>`, which is not yet on `main`. Implement `<other-slug>` first, OR re-invoke `/engineering-plan-author --rewrite` if the dep is incorrect."
+- **Engineering plan declares `Code deps` not yet shipped**: stop. Surface: "this chunk depends on `<other-slug>`, which is not yet on `main`. Implement `<other-slug>` first, OR re-invoke `/engineering-plan-author` if the dep is incorrect."
 - **Cross-chunk file conflict** (this chunk's Owns set overlaps another in-flight chunk's Owns set): stop. Surface as `OPEN_QUESTION` — the engineering plan claimed parallelism that doesn't hold.
 - **Plan claims tests that already exist with the same name**: this is the "test passes immediately because behavior already exists" case under Test-first authoring step 4. Surface as `PLAN_AMENDMENT_NEEDED`.
 - **TDD cycle reveals the chunk plan's "Tests to add" is incomplete** (implementation passes the listed tests but other tests fail): surface as `PLAN_AMENDMENT_NEEDED`. The chunk plan should have enumerated the regression-protection tests too.
 - **Mid-implementation discovery of a needed cross-cutting change** (e.g., implementing the chunk reveals a missing helper that other code paths also need): stop. Surface as `OPEN_QUESTION`. The right move is either (a) extract to a separate chunk via engineering-plan amendment, or (b) include the helper in this chunk's Owns set via plan amendment. Either way, the user re-plans, not the implementer.
 - **HEAD changes mid-execution**: emit `REPO_STATE_DRIFT`. User re-runs.
-- **Worktrees**: per CLAUDE.md "Git Worktrees", each worktree has independent dependencies and database; this skill operates on whichever worktree it was invoked in. The Pre-implementation gates run in that worktree's tree; the PR opens against that worktree's branch.
-- **Database migrations in the chunk's Owns set**: per CLAUDE.md "Database Protection (Non-Negotiable)", use `npm run db:migrate` (the safe wrapper). NEVER `prisma migrate dev`. Always `npm run db:snapshot` before applying. The chunk plan should have named these in the AC; if not, the chunk plan is incomplete.
+- **Worktrees**: When the project provides a worktree bootstrap script, `/execute-plan` provisions its own isolated worktree off `origin/main` (see **Worktree provisioning**) unless `--no-worktree` is passed or it is already running inside a linked worktree. Per CLAUDE.md "Git Worktrees", each worktree has independent dependencies and its own dev services stack; HEAD record, Pre-PR verification, `/open-pr`, and `/review-pr-v2` all run in that worktree, and the PR opens against its branch. If invoked from inside an existing linked worktree, the skill proceeds in place without nesting.
+- **Database migrations in the chunk's Owns set**: per CLAUDE.md "Database Protection (Non-Negotiable)", use the project's safe migration wrapper. NEVER run the interactive/destructive migration command directly. Always snapshot before applying. The chunk plan should have named these in the AC; if not, the chunk plan is incomplete.
 - **`--no-pr` and the working tree contains existing uncommitted changes** (the user had work in progress before invoking `/execute-plan`): stop. Refuse. The skill's working-tree contract is "clean before, modifications-from-this-chunk after"; mixed-state working trees produce ambiguous diffs at PR review time.
 
 ---
@@ -508,10 +488,11 @@ If the user passed `--no-review`, skip this step. The PR is open and unreviewed;
 ## Relationship to sister skills
 
 - **`/plan-author`** writes the chunk plan this skill consumes. The author's verification (ground-truth + self-prosecution) means this skill's State-load Status check is the only frontmatter-level gate at execution time — the author already ensured the plan is shape-correct.
-- **`/plan-review-v2`** prosecutes the chunk plan AFTER the author and BEFORE this skill. By the time `/execute-plan` runs, the plan should have no `Status:` frontmatter (author skill removed it on APPROVED emission). The Status check doesn't require evidence of review (no skill writes a "reviewed" marker), so a user could in principle invoke `/execute-plan` against an unreviewed plan; this skill warns in the verdict by checking whether `~/.claude/cache/review-state/<feature>__<chunk-slug>.json` exists with a recent APPROVED verdict.
-- **`/open-pr`** handles commit-chunking and PR creation. This skill writes the implementation; `/open-pr` ships it.
-- **`/review-pr-v2`** is the post-execution gate. After `/open-pr` succeeds, the agent in the main thread invokes the Skill tool with `skill: review-pr-v2` (unless `--no-review` was passed). The hand-off is the agent's responsibility — `/execute-plan` does not call `/review-pr-v2` programmatically.
+- **`/plan-review-v2`** prosecutes the chunk plan AFTER the author and BEFORE this skill. By the time `/execute-plan` runs, the plan should have no `Status:` frontmatter (author skill removed it on APPROVED emission). The Status check doesn't require evidence of review (no skill writes a "reviewed" marker), so a user could in principle invoke `/execute-plan` against an unreviewed plan; this skill warns in the verdict by checking whether the chunk's review-state file exists with a recent APPROVED verdict (slug per `_plan-common/layout.md`: `<feature>__<chunk-slug>` when flat, `<feature>__<track>__<chunk-slug>` when tracked).
+- **`/open-pr`** is the standalone commit-chunking + PR-creation skill (and the manual path under `--no-pr`). On a clean completion `/execute-plan` opens the PR inline itself rather than calling it.
+- **`/review-pr-v2`** is the post-execution gate. `/execute-plan` does NOT run it — the user starts it in a fresh context after the PR opens, so the review is independent of the session that wrote the code.
 - **`/engineering-plan-author`** is invoked when the chunk plan reveals an engineering-plan defect (false parallelism, missing chunk, wrong invariant). The user re-invokes that skill, not this one.
 - **`/brief-author`** is invoked when the chunk plan reveals a brief defect (Goal that doesn't trace, Non-goal that should have been a Goal). The user re-invokes that skill upstream, then re-runs the engineering-plan + chunk-plan + execute chain.
+- **`/cleanup-worktree`** tears down the isolated worktree this skill provisions (worktree + isolated dev stack + local branch). Run it after the chunk's PR is merged; `/execute-plan` itself never cleans up, because the worktree must survive for `/open-pr` + `/review-pr-v2` + merge.
 
 The five-skill chain — `/brief-author` → `/engineering-plan-author` → `/plan-author` → `/execute-plan` → `/review-pr-v2` — is the canonical feature-delivery pipeline for this project. Each skill enforces its own discipline; together they make hallucinated work, weakened tests, and Factoring Contract violations all at-author-time defects rather than at-review-time defects.

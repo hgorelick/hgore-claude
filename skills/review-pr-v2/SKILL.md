@@ -1,18 +1,23 @@
 ---
 name: review-pr-v2
-description: Single-pass three-stage adversarial review of the current branch's PR with cross-invocation convergence and bounded same-round verification. Stage 1 grounds the diff in repo reality, runs gates baseline, and loads round-memory state. Stage 2 runs persona prosecution in parallel with mandatory premise interrogation (diff-baseline + PR-description-vs-diff sub-passes); fix-list output, no direct edits. Stage 3 applies fixes, runs post-fix premise verification on rewritten prose, runs SAME-ROUND focused re-prosecution on diff hunks (≤1 re-pass; bounded, never an inner loop) when orchestrator-fix-count > 0 / falsified > 0 / HEAD-changed holds, runs decisions-log-first carry-forward (Priority 1: features/<feature>/decisions.md when feature-scoped; Priority 2: prior-blocker classification consistency), classifies remaining, re-runs gates, commits, persists state, posts the verdict to the PR. No multi-round loop; round memory ensures the next run does not re-prosecute already-accepted code.
+description: Adversarial single-pass review of the current branch's PR, converging across re-invocations. Applies fixes, re-runs gates, commits, and posts the verdict to the PR. Use after `/open-pr`. Sister to the plan-layer reviewers (`/brief-review-v2`, `/engineering-plan-review-v2`, `/plan-review-v2`).
 user-invocable: true
 ---
 
 # Review PR v2 — Staged Single-Pass
 
-Three stages, with bounded same-round verification on orchestrator-rewritten code/prose. Never a multi-round inner loop. If blockers remain, the user resolves them and re-invokes — the next run carries forward round-memory state (touched-file hashes, prior blockers, classification history) so it does not re-prosecute code that was reviewed and accepted last time.
+Three stages (plus a feature-scoped Stage 1.5 Brief-conformance gate between Stages 1 and 2), with bounded same-round verification on orchestrator-rewritten code/prose. Never a multi-round inner loop. If blockers remain, the user resolves them and re-invokes — the next run carries forward round-memory state (touched-file hashes, prior blockers, classification history) so it does not re-prosecute code that was reviewed and accepted last time.
 
 ## Shared scaffolding (read these as needed; do not inline into agent prompts)
 
 - `~/.claude/skills/_review-common/principles.md` — stance, banned rationalizations, severity/tier classification, plan style rules
+- `~/.claude/skills/_review-common/round-memory.md` — state file, load, capture priority, persist
+- `~/.claude/skills/_review-common/orchestrator.md` — the shared Stage 3 spine
 - `~/.claude/skills/_review-common/agent-prompt.md` — persona-agent prompt template
-- `~/.claude/skills/_review-common/critical-pairs.md` — pre-resolved rule conflicts (active subset for PR review: P-CLASS-SCOPE, P-FULL-FILE, P-PR-OWNERSHIP, P-PR-COVERAGE, P-PR-CLAIMS)
+- `~/.claude/skills/_review-common/critical-pairs.md` — pre-resolved rule conflicts (active subset for PR review: P-CLASS-SCOPE, P-FULL-FILE, P-PR-OWNERSHIP, P-PR-COVERAGE, P-PR-CLAIMS, P-PR-BRIEF-PARITY)
+- `~/.claude/skills/_review-common/brief-conformance-prosecutor.md` — Stage 1.5 Brief-conformance Prosecutor + Scope-fidelity Adversary roles (feature-scoped PRs; see § How the hosting skills invoke → PR-review-layer)
+- `~/.claude/skills/_review-common/class-sweep.md` — seeded sibling-enumeration stage (expands a found class)
+- `~/.claude/skills/_review-common/structural-sweep.md` — unseeded matrix-completion stage (discovers unfiled classes)
 - `~/.claude/skills/_review-common/blocker-classes.md` — blocker registry + verdict gate
 
 ## Workflow
@@ -29,15 +34,31 @@ Stage 1: Ground truth pass     (deterministic, no LLM judgment)
    ↓   Diff intake
    ↓   Stage 1 mechanical fixes
    ↓ produces audit_report
+Stage 1.5: Brief-conformance gate  (feature-scoped PRs only; parallel subagents)
+   ↓   detect feature-scope; reconstruct at-risk Goals touched by this PR
+   ↓   spawn 1 Brief-conformance Prosecutor + N per-Goal Scope-fidelity
+   ↓     Adversaries (isolated) against the DELIVERED diff, not a plan
+   ↓   BRIEF_NONGOAL_TRESPASS / BRIEF_GOAL_UNDELIVERED / SURFACE_PARITY_GAP
+   ↓     = Class A HARD, exempt from decisions-log carry-forward retraction
+   ↓ produces brief_conformance_findings (enter Stage 2 as pre-resolved)
 Stage 2: Persona prosecution   (LLM judgment, M parallel agents)
    ↓   each persona: premise interrogation (diff-baseline +
-   ↓                                        PR-description sub-passes)
+   ↓                                        PR-description +
+   ↓                                        Goal-outcome sub-passes)
    ↓                 + standard prosecution + round-memory tagging
    ↓ produces fix_lists
 Stage 3: Orchestrator decision (apply Stage 1 mechanical fixes, filter by
                                  round-memory tags, filter by critical-pair
-                                 policies, detect cross-persona disagreement,
-                                 consolidate fixes, run post-fix premise
+                                 policies, run Structural Sweep (UNSEEDED —
+                                 one agent per universe over the diff: L
+                                 guard liveness, T changed-surface tests,
+                                 Z mutation authorization; runs even on a
+                                 zero-finding round — _review-common/
+                                 structural-sweep.md), run Class Sweep (one
+                                 agent per distinct recurring category walks
+                                 the diff + blast radius for siblings —
+                                 _review-common/class-sweep.md), detect cross-persona
+                                 disagreement, consolidate fixes, run post-fix premise
                                  verification on orchestrator-rewritten prose,
                                  run SAME-ROUND focused re-prosecution on
                                  diff hunks (≤1 re-pass) when ANY of:
@@ -46,7 +67,9 @@ Stage 3: Orchestrator decision (apply Stage 1 mechanical fixes, filter by
                                  Priority 1 (features/<feature>/decisions.md
                                  when PR is feature-scoped) then Priority 2
                                  (prior_blocker classification consistency),
-                                 re-run gates, commit, classify remaining,
+                                 re-run gates, commit, execute the PR
+                                 `## Test plan` and tick it off (fix failures
+                                 or escalate), classify remaining,
                                  persist state file, run compliance self-check,
                                  render and post verdict)
 ```
@@ -98,53 +121,34 @@ This pass exists to break two PR-review thrash patterns observed in prior runs:
 
 Both are mitigated by carrying file-hash and prior-blocker state across invocations.
 
-#### State file location
+#### State file
 
-State lives at `~/.claude/cache/review-state/<repo-slug>__pr-<N>.json` (NOT in the project; survives worktrees; never committed). The slug is `<owner>__<name>` from `gh repo view --json nameWithOwner --jq .nameWithOwner` with `/` replaced by `__`. Create the parent directory with `mkdir -p ~/.claude/cache/review-state` if missing.
+Location, core schema, load rules, and persist rules: `~/.claude/skills/_review-common/round-memory.md`. Read it. The PR layer differs and adds as follows.
 
-#### State file schema
+**Vocabulary.** This layer counts *invocations*, not rounds: `invocation_number`, `raised_in_invocation`, `resolved_in_invocation`, `carry_forward_until_invocation` are this layer's names for the shared `round_number`, `raised_in_round`, `resolved_in_round`, `carry_forward_until_round`. Same semantics.
 
-```json
-{
-  "repo_slug": "<owner>__<name>",
-  "pr_number": <integer>,
-  "branch": "<name>",
-  "invocation_number": <integer, 1-indexed>,
-  "last_review_at": "<ISO 8601 UTC>",
-  "last_verdict": "APPROVED | NEEDS_USER_INPUT",
-  "last_head_sha": "<sha>",
-  "last_diff_files": [
-    {"path": "<path>", "blob_sha": "<git blob sha>"}
-  ],
-  "prior_blockers": [
-    {
-      "blocker_class": "STABLE_DISAGREEMENT | OPEN_QUESTION | POLISH_PLATEAU | FIX_INTRODUCED_REGRESSION | FIX_INTRODUCED_PREMISE_INVERSION | BASELINE_RED",
-      "path_or_section": "<path:line range or N/A>",
-      "summary": "<one-line>",
-      "raised_in_invocation": <integer>,
-      "current_reclassification_justification": "<one-sentence repo-state justification when this invocation reclassified the blocker from a prior class; absent if blocker class is unchanged from prior invocation>"
-    }
-  ],
-  "recently_resolved_blockers": [
-    {
-      "blocker_class_when_resolved": "<class | RESOLVED>",
-      "path_or_section": "<path:line range or N/A>",
-      "summary": "<one-line>",
-      "resolved_in_invocation": <integer>,
-      "user_decision": "<one-sentence rationale extracted from the resolution evidence (see capture priority below); 'no rationale recorded' if the user resolved silently>",
-      "carry_forward_until_invocation": <integer; defaults to resolved_in_invocation + 2>
-    }
-  ]
-}
-```
+**Slug** — `<owner>__<name>__pr-<N>`, with `<owner>__<name>` from `gh repo view --json nameWithOwner --jq .nameWithOwner` and `/` replaced by `__`.
 
-**Backward compatibility:** state files written before this schema extension lack `current_reclassification_justification` and `recently_resolved_blockers`. Treat absence as `null` / `[]` respectively when reading; populate normally when writing. The schema is additive.
+**Extra fields:**
 
-**`user_decision` capture priority** (apply in order; first hit wins):
-1. **Explicit PR comment** by the user that names the resolution choice ("I picked Option B because ..."). Use the comment's relevant sentence verbatim (truncate to ~200 chars).
-2. **Commit message body** of the commit that resolved the blocker, if the body contains rationale prose. Use the rationale sentence.
-3. **Commit message subject** of the resolving commit, if no body rationale. Use the subject as best-available signal.
-4. **No rationale recorded** if the resolution evidence is silent.
+- `pr_number`, `branch` — the PR under review.
+- `last_head_sha` — HEAD at the last invocation; feeds force-push detection.
+- `last_diff_files` — `[{"path": "<path>", "blob_sha": "<git blob sha>"}]`; feeds the file-hash diff.
+
+There is no `last_artifact_sha256` here — a PR's artifact is a diff, so `last_head_sha` plus `last_diff_files` play that role.
+
+**Blocker classes seen here** — `POLISH_PLATEAU`, `FIX_INTRODUCED_REGRESSION`, `BASELINE_RED`, `SURFACE_PARITY_GAP`, `BRIEF_NONGOAL_TRESPASS`, `BRIEF_GOAL_UNDELIVERED`, `REMEDIATION_INCOMPLETE`, `DECISIONS_PROVENANCE_GAP`, plus the universal three.
+
+- `remediation_completeness` — the per-blocker result of the two further questions asked of every `resolved` prior blocker (schema in the Prior-blocker consistency check). One entry per prior blocker, never sampled.
+
+**Capture priority** replaces the shared list, because a PR carries evidence the plan layers don't:
+
+1. **An explicit PR comment** naming the resolution choice ("I picked Option B because…") — use the relevant sentence verbatim.
+2. **Commit message body** of the resolving commit, when it carries rationale prose.
+3. **Commit message subject** of the resolving commit.
+4. **`"No rationale recorded"`** when the evidence is silent.
+
+Cap at ~200 chars.
 
 #### Load prior state
 
@@ -211,6 +215,16 @@ Each prior blocker becomes one of:
 - **`carrying_forward`** — content unchanged AND matches the prior blocker's symptom; will appear in this invocation's verdict at the same blocker class.
 - **`reclassification_pending`** — content has changed but a Stage 2 finding may emerge with a *different* blocker class on overlapping span. Mark for the orchestrator to challenge in Stage 3: any new classification that differs from the prior class on overlapping span MUST include justification grounded in repo state (new commit, file change, new evidence) — without justification, the new classification is downgraded to `OPEN_QUESTION` per the prior-classification consistency rule. This mirrors `/engineering-plan-review-v2`'s Decision-Closure consistency check.
 
+##### Remediation completeness — two further questions on every `resolved` blocker (MANDATORY)
+
+The classification above answers **closed?** and stops there. Stage 3's same-round re-prosecution and post-fix premise verification cover only the **orchestrator's own** commits, so nothing in the pipeline asks whether the user's between-invocation fix actually *finished*. At this layer that gap is sharper than at the plan layers, because a code fix has call sites: a one-line change at exactly the line the finding cited, with every sibling call site untouched, presents as `resolved` on a content-changed check and ships the bug. Ask both questions of every blocker classified `resolved`, with no sampling.
+
+1. **Swept?** Enumerate the sites the fix must reach and check each: every other call site of the changed symbol (`grep` the identifier repo-wide, not just within the diff), every sibling instance of the same defect class elsewhere in the diff, the **tests** covering the changed behavior (a fix with no test asserting it regresses silently on the next PR), and — where the prior blocker named a class rather than an instance — the whole class. A fix present at the cited line and absent from its coupled sites files `REMEDIATION_INCOMPLETE` (HARD, severity inherited from the original blocker), and the surviving sites feed the Class Sweep as seeds rather than waiting for a persona to rediscover them.
+
+2. **Recorded?** On a feature-scoped PR (any path under `features/<feature>/` touched, or a commit / PR body citing a feature dir — the same detection Priority-1 carry-forward already uses), an arbitration the user made to close a blocker belongs in `features/<feature>/decisions.md`. Search for a bound Active-section entry covering it. A PR body, commit message, or plan span that *cites* a `decisions.md` entry which does not exist is a `DECISIONS_PROVENANCE_GAP` (HARD, HIGH) — resolve the citation by heading, not by date alone. An unrecorded arbitration cannot be retracted by Priority-1 carry-forward on the next invocation, so the same ground is re-prosecuted indefinitely. Non-feature-scoped PRs skip this question; record `decisions_entry: "n/a — not feature-scoped"`.
+
+Record as `remediation_completeness` in the state file: `{blocker, closed: yes|no, closing_evidence, coupled_sites_checked: [...], sites_missed: [...], decisions_entry: "<heading>" | "none — <class>" | "n/a — not feature-scoped"}`. An entry with an empty `coupled_sites_checked` answered only the first question; re-run it. Both classes are **exempt from Priority-2 carry-forward** — each is an assertion about the completeness of the carry-forward record itself, so retracting it against that record is circular; `DECISIONS_PROVENANCE_GAP` is additionally exempt from Priority 1.
+
 Emit a `prior_blocker_audit` block:
 
 ```
@@ -228,7 +242,7 @@ Persist-on-exit runs near the end of Stage 3 — see "Persist state file" (execu
 
 #### Edge case — manual reset
 
-If the user wants to discard prior-invocation memory (e.g., after a major PR overhaul), they delete `~/.claude/cache/review-state/<repo-slug>__pr-<N>.json` manually. The skill does NOT auto-detect "the PR was rewritten" because that judgment can be wrong; explicit deletion is the safe lever.
+Per the shared file: the user deletes the state file to discard prior-invocation memory. Never auto-detect "the PR was rewritten" — a force-push is not a reset.
 
 ### Repo Reality Audit
 
@@ -310,6 +324,58 @@ the failing gates (or carve them out with a stable rationale) and re-invoke
 
 ---
 
+## Stage 1.5 — Brief-conformance gate (feature-scoped PRs only)
+
+This gate promotes outcome-scope parity from an informal per-persona lens to a **dedicated check at the PR layer** — the last gate before merge, and the first point where the artifact under judgment is delivered *code*, not a plan. It reuses the shared roles in `~/.claude/skills/_review-common/brief-conformance-prosecutor.md` (the same Brief-conformance Prosecutor + per-Goal Scope-fidelity Adversary `/engineering-plan-review-v2` runs), adapted to judge the diff. **Read that file's § How the hosting skills invoke → PR-review-layer before spawning** — it defines every delivered-code substitution. Runs between Stage 1 and Stage 2; its findings enter Stage 2 as pre-resolved hard findings.
+
+### When it runs
+
+Only when the PR is **feature-scoped**, detected exactly as the Stage 3 Priority-1 carry-forward does:
+
+1. Inspect the diff's changed-files list. If any path matches `features/<feature>/(brief|engineering-plan|decisions|implementation/.*)\.md`, OR any commit-message body cites `features/<feature>/`, OR the PR description links a feature directory → feature-scoped; capture `<feature>`.
+2. Not feature-scoped → record `brief_conformance: n_a (not feature-scoped)` and skip to Stage 2. There is no brief to trace to.
+3. Feature-scoped but `features/<feature>/brief.md` absent → record `brief_conformance: skipped (no brief.md)` and skip.
+
+If `baseline_red == true`, Stage 1.5 does NOT run (Stage 2/3 were already skipped).
+
+### Reconstruct the at-risk Goals this PR touches
+
+`Read` `features/<feature>/brief.md` and enumerate its `## Goals`. Select the **at-risk** subset — a Goal carrying a domain quantifier ("every", "across", "all", "any", "going forward", "at every surface") OR naming an authoritative signal/basis the outcome must be judged/computed on. A concrete single-surface Goal is not at-risk and gets no adversary here (the Stage 2 Scope-persona lens covers it — see § Skill-specific extensions → Goal-outcome premise check).
+
+Then intersect with what THIS PR delivers: `Read` the feature's engineering plan § Brief mapping to learn which chunks deliver each at-risk Goal, and match against the PR's changed files / description / chunk slug. The plan is at `features/<feature>/engineering-plan.md` when the feature is flat, or `features/<feature>/plans/<track>/engineering-plan.md` when tracked — per `~/.claude/skills/_plan-common/layout.md`. For a tracked feature, read **every** track's Brief mapping: the PR's chunk belongs to one track, but a Goal's remaining clauses may be another's, and only the union tells you whether this PR is meant to deliver the whole Goal or one declared clause of it. A Goal no part of this PR touches gets no adversary. Record the selection:
+
+```
+### Stage 1.5 Goal selection (feature: <feature>)
+At-risk Goals: <list>
+Touched by this PR (adversary spawned): <list>
+Skipped — not at-risk: <list>
+Skipped — not touched by this PR: <list>
+```
+
+When in doubt whether a Goal is at-risk or touched, spawn the adversary — a clean attestation is cheap; a missed narrowing is the failure this gate exists to prevent.
+
+### Spawn the gate (parallel subagents)
+
+Following `brief-conformance-prosecutor.md` exactly. **Both roles take an explicit off-model `model` override** per that file's § Model pin (default `sonnet`; `opus` if the session is already Sonnet) — never inherit the session model. Record the pinned model as `brief_conformance_report.conformance_gate_model`.
+
+1. **One Brief-conformance Prosecutor** (`general-purpose` agent) with the prosecutor prompt, `{plan_path}` = the delivered diff (`gh pr diff`) + changed source files at branch HEAD, `{plan_layer}` = `pr-diff`. Files `BRIEF_NONGOAL_TRESPASS` (delivered code does what a Non-goal forbids) and `BRIEF_GOAL_UNDELIVERED` (PR claims a Goal but ships only enabling code).
+2. **N Scope-fidelity Adversaries** — one per selected at-risk Goal, each given exactly ONE Goal, spawned **in isolation** (never batched — the isolation is load-bearing and validated). Each reconstructs its Goal's domain + authoritative basis and checks whether the delivered code serves the outcome across the domain slice this PR's chunk claims, on the authoritative input, before any irreversible step. Files `SURFACE_PARITY_GAP`.
+
+Launch all in one parallel batch. `{brief_path}` = `features/<feature>/brief.md`; `{sibling_plan_paths}` = every OTHER track's `engineering-plan.md` when the feature is tracked, else "none" (required — a PR ships one track's chunk, so without the siblings the adversary judges the diff against Goal clauses another track owns); `{decisions_path}` = `features/<feature>/decisions.md` (**Active-section `Status: bound` entries only** — a `superseded`/`obsolete` entry does not confer launch-acceptable authority and cannot suppress a parity finding); `{additional_examples}` = any accumulated calibration examples from prior invocations' state.
+
+### Route the findings
+
+Merge every role's `findings` array (identical schema).
+
+- **All roles `passed`** → record `brief_conformance: passed`; proceed to Stage 2 with no pre-resolved brief findings.
+- **Any `findings_filed`** → each finding is **Class A** (per `principles.md` § Cross-artifact authority order) and enters Stage 2 as a `pre_resolved_hard_finding` personas inherit but **cannot retract**. Class A findings are **exempt from Stage 3's decisions-log-first carry-forward** — a `Status: bound` `decisions.md` entry does NOT drop them (only a brief amendment, or an Active bound entry that explicitly scoped the residual as launch-acceptable, resolves one). They surface in the verdict as blockers.
+
+A parity / trespass finding is **not auto-fixed**: extending domain coverage or moving an irreversible step is a scope change, and Stage 3's Forbidden-fixes rule bars the orchestrator from silently changing the PR's intent. Escalate to the director with the finding's `resolution_paths` (extend coverage in a follow-up chunk, or scope the Goal down in the brief). Malformed output (a finding missing verbatim `brief_quote` or `contradicting_evidence`) → re-spawn only that one role once; persistent malformed output escalates as an internal error.
+
+Record a `Stage 1.5 brief-conformance` block in the audit: feature, Goals selected/skipped, roles spawned, findings by class.
+
+---
+
 ## Stage 2 — Persona prosecution (parallel agents, fix-list output)
 
 ### Empanel the panel
@@ -324,7 +390,7 @@ Convene multiple hostile experts. Use `personas/` files when present (`personas/
 4. **Security** — auth/authz bypass, injection, secrets, unsafe blocks, deserialization, path traversal, privilege escalation.
 5. **Drift** — does changed code follow existing patterns? New abstractions where existing one would serve? Parallel types alongside old? Dead code?
 6. **Test** — for every behavior change: would a test catch the *old* behavior failing? Assertions weakened? Failing-and-fixed test actually testing the fix or masking it? Edge cases?
-7. **Scope** — does the diff do what the PR description claims? Unrequested refactors, sneaky behavior changes, speculative features?
+7. **Scope** — does the diff do what the PR description claims? Unrequested refactors, sneaky behavior changes, speculative features? On feature-scoped PRs, also apply the **Goal-outcome lens**: for the brief Goal(s) this PR delivers, read each Goal for its *intended outcome* (not its mechanism wording, not the PR description's restatement) and verify the delivered code achieves that outcome — performing a Goal's named mechanism on one surface does not satisfy a Goal whose outcome must hold across a domain. This is the concrete-Goal counterpart to the Stage 1.5 adversary (which covers the domain-quantified / authoritative-signal Goals); see § Skill-specific extensions → Goal-outcome premise check.
 8. **Factoring** — self-pointers, orphaned clauses, helper-shaped repetition, half-finished refactors, comments paraphrasing the identifier, vestigial vocabulary.
 
 **Per-PR additions:** UI-heavy → add `ui-code-review`. Data/schema-heavy → add `data-engineering`. Perf-sensitive → add `performance`. For small PRs, prune to 3–4 most-relevant from the default 8.
@@ -340,14 +406,15 @@ The construction recipe — follow exactly, no shortcuts:
 3. **Read** the persona file (`personas/<persona_name>.md`) so you know it exists and the agent will Read it on demand.
 4. Construct the prompt by substituting the bracketed slots in the template verbatim. The `{skill_specific_extensions}` slot is replaced with the entire "Skill-specific extensions" block from this file (the premise interrogation + round-memory tagging text below). The `{skill_specific_preamble}` slot becomes `premise_interrogation: passed | premise_inversions_filed; invocation_number: <N>`. The `{skill_specific_resets_block}` slot is `none`.
 5. If `invocation_number > 1`, prepend the `file_diff_report` and `prior_blocker_audit` blocks to the prompt body verbatim, before the `## Your task` section in the template.
-6. Send. Do not paraphrase. Do not summarize. Do not "skip the boilerplate".
+6. If the PR is **feature-scoped** (Stage 1.5 ran), prepend the `Stage 1.5 Goal selection` block AND the line `feature_scoped: yes; brief_path: features/<feature>/brief.md; engineering_plan_path: <resolved plan path>` before the `## Your task` section (for a tracked feature, list every track's plan path, comma-separated, with the PR's own track marked) — this is what enables the persona Goal-outcome premise check. If the PR is not feature-scoped, prepend `feature_scoped: no` so personas skip that sub-pass. Also prepend the Stage 1.5 findings into `{pre_resolved_hard_findings}` (Class A; personas cannot retract them).
+7. Send. Do not paraphrase. Do not summarize. Do not "skip the boilerplate".
 
 Substitution values:
 
 - `{persona_name}` — the persona being prosecuted as
 - `{audit_report_bullets}` — Stage 1 audit (compact bullets, not full YAML; includes `prior_blocker_audit` and `file_diff_report` when `invocation_number > 1`)
-- `{pre_resolved_hard_findings}` — anything Stage 1 already raised
-- `{active_critical_pair_subset}` — `P-CLASS-SCOPE, P-FULL-FILE, P-PR-OWNERSHIP, P-PR-COVERAGE, P-PR-CLAIMS`
+- `{pre_resolved_hard_findings}` — anything Stage 1 already raised, **plus every Stage 1.5 brief-conformance finding** (`BRIEF_NONGOAL_TRESPASS` / `BRIEF_GOAL_UNDELIVERED` / `SURFACE_PARITY_GAP`; Class A — personas inherit these but must NOT re-litigate or retract them; a persona may add corroborating detail but the finding stands regardless)
+- `{active_critical_pair_subset}` — `P-CLASS-SCOPE, P-FULL-FILE, P-PR-OWNERSHIP, P-PR-COVERAGE, P-PR-CLAIMS, P-PR-BRIEF-PARITY`
 - `{target_locator}` — the PR number + branch
 - `{how_to_get_it}` — `gh pr diff`, `gh pr view --json title,body`, `git ls-files`, `Read <path>` (paths from changed-files list)
 - `{pr_description_or_brief_mapping}` — the PR title + body
@@ -359,7 +426,7 @@ Personas must include `targets_unchanged_file: yes | no` and `regression_risk: y
 
 The full diff is small enough to pass inline (gh pr diff output). Changed file *contents* are NOT inlined — agents Read them on demand. Source-of-truth files (CLAUDE.md, SPEC.md, persona files) are referenced by path; agents Read what their persona needs.
 
-Launch all M agents in parallel in a single message.
+Launch all M agents in parallel in a single message, each with `model: "sonnet"` per `_review-common/agent-prompt.md` § Model pin — never inherit the session model; record `persona_model` in the review state.
 
 #### Compliance self-check (mandatory, before launching)
 
@@ -368,6 +435,7 @@ Before sending the persona Agent calls, verify the constructed prompt for each a
 - The literal string `Premise interrogation (mandatory` (or the verbatim heading from the extensions block).
 - The literal string `Diff-baseline premise check`.
 - The literal string `PR-description premise check`.
+- If the PR is feature-scoped (Stage 1.5 ran): the literal string `Goal-outcome premise check`, the `feature_scoped: yes` line, AND the `Stage 1.5 Goal selection` block.
 - If `invocation_number > 1`: the literal string `file_diff_report` AND the unchanged-file gate text.
 - If `invocation_number > 1`: the literal string `prior_blocker_audit` AND the reclassification consistency text.
 
@@ -379,7 +447,7 @@ If any required string is missing, you authored a custom prompt instead of using
 >
 > ### Premise interrogation (mandatory — runs before standard prosecution)
 >
-> PR reviews thrash hardest when findings are filed against premises that don't survive verification. Your job in this pass is to falsify load-bearing premises before generating any other findings. Two sub-passes: **diff-baseline** (claims the diff makes about pre-existing repo state) and **PR-description** (claims the PR description makes about what the diff does).
+> PR reviews thrash hardest when findings are filed against premises that don't survive verification. Your job in this pass is to falsify load-bearing premises before generating any other findings. Three sub-passes (the third only on feature-scoped PRs): **diff-baseline** (claims the diff makes about pre-existing repo state), **PR-description** (claims the PR description makes about what the diff does), and **Goal-outcome** (does the delivered code achieve the intended outcome of the brief Goal it claims, not just perform the Goal's mechanism).
 >
 > #### Diff-baseline premise check
 >
@@ -398,6 +466,18 @@ If any required string is missing, you authored a custom prompt instead of using
 > 3. A description claim that does not survive verification is a **premise inversion: pr-description**. File as a normal finding with severity **HIGH HARD**, category **SCOPE**, and prefix the `finding` field with `[premise inversion: pr-description]`. The `evidence` field MUST quote both the description's claim and the contradicting diff hunk verbatim. (P-PR-CLAIMS critical-pair policy applies — descriptions claiming X but diffs doing Y are valid SCOPE findings; descriptions silent about benign Y are not.)
 >
 > 4. Be calibrated. A premise inversion is "the description says 'fixes the N+1 query in cascadeRewrite' but the diff modifies only seedTestData — the N+1 query is untouched." It is NOT "the description's wording is imprecise" or "the description omits a minor side effect."
+>
+> #### Goal-outcome premise check (feature-scoped PRs only)
+>
+> Runs only when the orchestrator marked this PR feature-scoped and passed you the brief path + the `Stage 1.5 Goal selection` block. The Stage 1.5 gate already ran the per-Goal Scope-fidelity Adversary on the *domain-quantified / authoritative-signal* Goals; this sub-pass covers the **concrete single-surface Goals** the at-risk filter excluded, and re-checks the delivered code against each Goal's *outcome* rather than its *mechanism*.
+>
+> 1. `Read` `features/<feature>/brief.md` § Goals. For each Goal this PR delivers (per the Goal-selection block / PR description), reconstruct the **intended outcome** — the observable user-facing or system result the Goal commits to. If the Goal is phrased as a *mechanism* ("via an allowlist", "using a dedupe step", "with an LLM pass"), do NOT treat performing that mechanism as satisfying it — reconstruct the outcome the mechanism was meant to produce and check *that*. A reader who takes mechanism words literally-disjunctively (allowlist here, ML there) wrongly acquits code that ships the outcome nowhere whole; that literal reading is the exact miss this check exists to catch.
+>
+> 2. Verify the delivered diff achieves the reconstructed outcome. Code that performs a Goal's mechanism while the outcome the Goal commits to does not hold is a **premise inversion: goal-outcome**. File as a normal finding with severity **HIGH HARD**, category **SCOPE**, prefix the `finding` field with `[premise inversion: goal-outcome]`, and quote both the brief Goal verbatim and the contradicting diff/code hunk verbatim with `path:line` anchors.
+>
+> 3. Be calibrated (P-PR-BRIEF-PARITY applies). A finding here is "Goal G commits to outcome O; the diff performs G's mechanism but O does not hold — e.g. the code the PR ships filters dismissed items from the recommendation rows but not from the cross-category sections the same Goal names." It is NOT "the outcome could be phrased better", and it is NOT a domain member a *different* chunk owns (scope to the slice this PR's chunk claims per the EP Brief-mapping). If the outcome holds for this PR's slice, file nothing here.
+>
+> A goal-outcome premise inversion is **Class A** — it is not retracted by a `Status: bound` `decisions.md` entry; only a brief amendment or an Active bound entry explicitly scoping the residual as launch-acceptable clears it.
 >
 > If after honest interrogation no premises invert, output `premise_interrogation: passed` and proceed to standard prosecution. Do not invent premise-inversion findings to look thorough — false positives waste user invocations the same way false negatives ship broken code.
 >
@@ -457,6 +537,34 @@ For each finding from each persona:
 - Duplicates a Stage 1 hard finding already mechanically fixed → retract.
 - Otherwise → keep.
 
+### Structural Sweep (unseeded — runs even on a zero-finding invocation)
+
+Runs after critical-pair filtering and **before the Class Sweep** (so the Class Sweep can fold an already-walked universe instead of re-walking it). Skipped when `baseline_red == true` (Stage 2/3 never ran). Per `~/.claude/skills/_review-common/structural-sweep.md` — read it for the mechanism, agent template, merge, and state/verdict schema. This section fills the PR slots.
+
+**Why it is here.** The Class Sweep below is seeded from surviving findings and cannot discover a class nobody filed — so a defect class no persona noticed is invisible to the whole pipeline, with no compliance check firing, because there was no seed to be incomplete about. This is the last gate before merge, so an unfiled class here reaches real code. The stage runs regardless of the invocation's finding count.
+
+**Universes at this layer** (all three bounded by PR ownership — in-diff plus blast radius; an out-of-ownership member is filed `OPEN_QUESTION`, never silently swept, exactly as the Class Sweep's ownership rule requires):
+
+- **Universe L — guard liveness.** Members: every guard, assertion, validation check, early return, or invariant the diff adds or changes. The question: is there a reachable state in which this can never hold — a dead guard, an always-false branch, a check whose predicate is forced elsewhere? **Its mandatory trace procedure applies, over code:** resolve every term the guard references to its definition, and find every path that sets it, before judging. A guard judged by reading only its own line is not judged.
+- **Universe T — changed-surface test coverage.** Members: every public surface the diff adds or changes (exported function, endpoint, resolver, mutation, hook, CLI flag, schema field). The question: does the diff include a test exercising the *changed behavior* — judged on the assertion, not on a file existing? Closures: a test in the diff asserts it; an existing named test already covers it and the diff does not change what it asserts; the surface is a pure re-export or rename with no behavior change.
+- **Universe Z — mutation authorization.** Members: every mutation, write path, or state-changing operation the diff adds or changes. The question: does it perform authentication and authorization in **this project's established pattern** — read that pattern from the project's own `CLAUDE.md` and a sibling resolver, never from a generic notion of auth — before it mutates? A GAP is HIGH by default. This universe exists because auth is the canonical individually-obvious, collectively-forgotten check: a reviewer reads a new mutation, sees the surrounding pattern, and assumes it applies.
+
+**Merge:** every GAP becomes a same-round finding at the sweep-judged severity, routed through the same round-memory and critical-pair filters and the same ownership bound as a persona finding.
+
+### Class Sweep
+
+Runs after the Structural Sweep and after critical-pair filtering (so a category whose only seed was retracted is not swept), before Detect cross-persona disagreement / Consolidate. Skipped when `baseline_red == true` (Stage 2/3 never ran). Pass `{structural_sweep_universes_run}` from the stage above so a widened peer-set overlapping a walked universe is folded in rather than re-walked. Per `~/.claude/skills/_review-common/class-sweep.md` — read it for the mechanism, sweep-agent template, merge, and state/verdict schema. PR personas file one instance of a recurring class per invocation (one un-updated callsite of a touched identifier, one mutation missing the guard the diff adds elsewhere, one behavior-change hunk with no test) and the siblings leak out one per re-invocation otherwise.
+
+**Procedure (per the shared file), with these PR-layer slots:**
+
+- **Seed grouping.** Group surviving Stage 2 findings by `class`. Every distinct `recurring_category` (and any `propagated_identity` with a >1 peer-set — a renamed/retired identifier across its callsites is the canonical PR case) gets one sweep agent, `model: "sonnet"`; genuine singletons are recorded `singleton: true` with no agent.
+- **`{peer_set_definition}`** — the PR's repeated units: every changed file / hunk in the diff, every callsite of a touched identifier, every mutation or handler the diff adds or edits, every behavior-changing hunk (for the missing-test class). Name the specific unit the seed's `peer_set` points at.
+- **`{artifact_access}`** — `gh pr diff` + Read the changed files at branch HEAD. For `propagated_identity`, grep the token across the repo.
+- **`{layer_notes}`** — **PR ownership bounds the sweep (`P-PR-OWNERSHIP`).** Siblings are in scope only when they live in a file the PR touches OR in the **blast radius** of a touched identifier (an untouched caller of a function the diff changed that must update too). A sibling in a completely untouched file outside the blast radius is NOT this PR's burden — record it as `OPEN_QUESTION`, not a fix. Class A parity/trespass siblings (`SURFACE_PARITY_GAP` / `BRIEF_NONGOAL_TRESPASS` / `BRIEF_GOAL_UNDELIVERED`) are escalated, not auto-fixed.
+- **Merge.** Dedup siblings against the Stage 2 pool by `(class, path:line)`; route new siblings through the round-memory-tag + critical-pair retraction (same filter the seeds got) before folding them into Consolidate. Record the `class_sweep` block in the state file / verdict metrics.
+
+Skip the sub-pass (record `class_sweep.ran=false`) only when zero sweep-eligible categories exist among the surviving findings.
+
 ### Detect cross-persona disagreement
 
 For each diff span (path + line range), collect surviving findings.
@@ -468,7 +576,7 @@ Common: factoring persona says "extract helper"; drift persona says "match exist
 
 Deduplicate findings across personas (same defect flagged by multiple → merge, attribute to all). Group by:
 - Target file
-- Class (per Class > line — apply to every instance in the declared universe, not just the named line)
+- Class (per Class > line — apply to every instance in the universe, which now includes the siblings the Class Sweep above promoted into the finding pool, not just the named line)
 
 Apply fixes in a single editing pass across all touched files, ordered by:
 1. Severity (CRITICAL → HIGH → MEDIUM → LOW)
@@ -489,39 +597,32 @@ Refactor PRs (and any PR whose fix list rewrites comments, docstrings, schema di
 
 Gates do NOT catch these — the code compiles, the tests pass, but the prose asserts something the code doesn't do. The next invocation catches it via max-suspicion re-prosecution, costing the user a full round.
 
-This pass closes that loop in-invocation. **It runs in the orchestrator main thread (LLM judgment over a small set of changed lines), NOT as a sub-agent spawn** — the orchestrator already has the relevant context loaded and the input is bounded by Stage 3's own edit set.
+Mechanism: `~/.claude/skills/_review-common/orchestrator.md` § Post-fix premise verification. The PR layer scopes and verifies as follows.
 
 #### What is in scope
 
-For each file Stage 3 modified, identify the lines that were *added or rewritten* in the prose layer (NOT lines where only logic changed). Run `git diff --unified=0 <pre-stage-3-tree-ish>..HEAD -- <path>` on each file the orchestrator edited; collect the added-line set. Filter to lines that sit in any of:
+For each file Stage 3 modified, identify the lines *added or rewritten in the prose layer* — not lines where only logic changed. Run `git diff --unified=0 <pre-stage-3-tree-ish>..HEAD -- <path>` per edited file and collect the added-line set. Keep lines sitting in:
 - Inline comments (`//`, `#`, `--`, etc.)
 - Block comments / docstrings (`/** */`, `"""`, `'''`, `<!-- -->`)
-- Schema directive prose (Prisma `///` triple-slash docs, `@@index([...])` trailing comments, SQL `COMMENT ON ...`)
-- Markdown / plan-document prose (any added paragraph in `*.md` files)
+- Schema directive prose (an ORM's `///` schema docstrings, index/constraint annotations, SQL `COMMENT ON ...`)
+- Markdown / plan-document prose (any added paragraph in `*.md`)
 
-Lines outside those zones (pure logic, identifier renames in source, JSON config edits) are out of scope for this pass.
+Pure logic, identifier renames, and JSON config edits are out of scope here.
 
 #### How verification runs
 
-The orchestrator reads each in-scope added/rewritten line in context (the surrounding ~5 lines for prose continuity) and asks itself, line by line: "does this line make a claim about behavior, scope, constraint, or cross-reference that a reasonable reader would expect to be true of the current repo?" Apply LLM judgment, not a keyword filter — a claim doesn't need a particular verb to be a claim. Examples of claims to catch:
+Read each in-scope line with ~5 lines of surrounding context and ask: does this make a claim about behavior, scope, constraint, or cross-reference that a reader would expect to be true of the current repo? Judgment, not a keyword filter — a claim needs no particular verb.
 
-- "Hero blocks share the same identifier across replicas." — behavior claim; verify the replica-emission code actually preserves the identifier.
-- "Scope: src/ and tests/." — scope claim; verify the test or guard's actual reach.
-- "See replica_item_emitter.rs:42 for the canonical pattern." — cross-reference claim; Read line 42 and verify it says what the comment claims.
-- "The unique constraint on (userId, categoryId) prevents duplicate active sessions." — constraint claim; grep the schema for the unique constraint.
+- "Hero blocks share the same identifier across replicas." — behavior; verify the emission code preserves it.
+- "Scope: src/ and tests/." — scope; verify the guard's actual reach.
+- "See `replica_item_emitter.rs:42` for the canonical pattern." — cross-reference; read the cited line.
+- "The unique constraint on (userId, categoryId) prevents duplicate active sessions." — constraint; grep the schema for it.
 
-Examples of prose that does NOT carry a verifiable claim (skip):
-- Section headers ("## Migration steps").
-- Pure stylistic edits ("Removed trailing whitespace.").
-- Open-ended commentary that does not assert a current-repo fact ("This pattern is common in async Rust code.").
+Skip section headers, pure stylistic edits, and commentary that asserts no current-repo fact ("this pattern is common in async Rust").
 
-For each claim identified, run a verification appropriate to the claim's shape:
-- **Constraint claim**: grep DDL / source / test for the constraint. Does it exist?
-- **Behavior claim**: grep callers / callees of the cited function. Does the code path implement the claim?
-- **Scope claim**: verify the artifact's actual coverage matches.
-- **Cross-reference claim**: Read the cited line. Does it say what the comment claims?
+Match the check to the claim's shape: grep DDL for a constraint, trace callers/callees for a behavior, verify actual coverage for a scope claim, read the cited line for a cross-reference.
 
-A claim that does not survive verification is a `FIX_INTRODUCED_PREMISE_INVERSION` blocker. Do NOT commit. Leave the working tree dirty so the user can inspect both the original fix and the lie it introduced. Emit:
+A claim that does not survive is a `FIX_INTRODUCED_PREMISE_INVERSION` blocker. **Do NOT commit** — leave the tree dirty so the user sees both the fix and the lie it introduced. Emit:
 
 ```
 FIX_INTRODUCED_PREMISE_INVERSION at <path:line>:
@@ -615,19 +716,35 @@ Push when all fixes for the invocation are committed and gates are green locally
 git push
 ```
 
+### Execute the PR test plan and tick it off (mandatory)
+
+The PR description's `## Test plan` is the author's own checklist of what proves the change works. A review that does not run it has verified only the project's generic gates — which routinely miss the PR-specific surface: a CLI/script the diff adds, the *other* workspace's suite (`cd mobile && npm test` when the diff is backend-only, and vice versa), a `bash -n` parse, an operator-verification exit-code check. Run **every** item against the pushed post-fix HEAD. Re-running the generic gates is NOT a substitute — green gates and an un-run test plan is a half-finished review.
+
+1. Parse the `## Test plan` from `gh pr view --json body`. No test-plan section → record `test_plan: none` and proceed to classify.
+2. Run each item's command(s) verbatim. Items overlapping the gate re-run (typecheck/lint/full test) are already satisfied — run the remaining PR-specific ones. Source `.env` when an item needs it (the run-gates-with-env-sourced rule), e.g. an item that invokes a script reading `DATABASE_URL`.
+3. Disposition each item:
+   - **Passes** → tick it.
+   - **Fails** → a defect the review must resolve, not annotate around. Fold a fix into the Stage 3 fix set (commit it, re-run gates — the test plan then re-runs against the new HEAD), OR escalate as a blocker (`FIX_INTRODUCED_REGRESSION` if a Stage 3 fix broke it, else `OPEN_QUESTION`) and leave the box unticked.
+   - **Passes but the item's stated count drifted** (e.g. "(44 pass)" but the suite now reports a different number because the PR changed the test set) → correct the count to the observed value.
+4. Once every item passes against the final HEAD, update the PR body: tick each `- [ ]` → `- [x]`, correct drifted counts, annotate an item with the observed evidence where it adds signal (an exit code, a count), and append `_Test plan executed during /review-pr-v2 (invocation N, HEAD <sha>)._`. Fetch the body to a temp file (`gh pr view <N> --json body --jq .body > <tmp>`), edit the checkboxes/counts with Read/Edit, push back with `gh pr edit <N> --body-file <tmp>` — **never reconstruct the body inline** (transcription drift clobbers the author's prose).
+5. Record a `Test plan` line for the verdict: items run / passed / counts corrected / failures escalated.
+
+A test-plan item that fails is the most direct evidence a PR is not ready — weight it like a red gate. Never tick a box for an item you did not actually run, and never post the verdict with runnable test-plan items left unexecuted.
+
 ### Classify remaining unresolved findings
 
-See `~/.claude/skills/_review-common/blocker-classes.md` for the full registry. Active for PR review: `STABLE_DISAGREEMENT`, `OPEN_QUESTION`, `POLISH_PLATEAU`, `FIX_INTRODUCED_REGRESSION`, `FIX_INTRODUCED_PREMISE_INVERSION`, `BASELINE_RED`, `REPO_STATE_DRIFT`.
+See `~/.claude/skills/_review-common/blocker-classes.md` for the full registry. Active for PR review: `STABLE_DISAGREEMENT`, `OPEN_QUESTION`, `POLISH_PLATEAU`, `FIX_INTRODUCED_REGRESSION`, `FIX_INTRODUCED_PREMISE_INVERSION`, `BASELINE_RED`, `REPO_STATE_DRIFT`, `REMEDIATION_INCOMPLETE`, `DECISIONS_PROVENANCE_GAP`, and (feature-scoped PRs, from Stage 1.5) `BRIEF_NONGOAL_TRESPASS`, `BRIEF_GOAL_UNDELIVERED`, `SURFACE_PARITY_GAP` — the last three are Class A and were already exempted from Priority-1 retraction above. `REMEDIATION_INCOMPLETE` and `DECISIONS_PROVENANCE_GAP` are filed by the Prior-blocker consistency check's remediation-completeness questions and are exempt from Priority-2 carry-forward (and, for the latter, from Priority 1) — see `_review-common/blocker-classes.md` § Remediation-completeness.
 
 **Decisions-log-first carry-forward (Priority 1, when feature dir touched).** Many PRs implement chunks from a `features/<feature>/` directory; that feature's `decisions.md` is the project's durable arbitration record and outlasts PR-scoped state. Determine whether this PR is feature-scoped:
 
-1. Inspect the diff's changed-files list. If any path matches `features/<feature>/(brief|engineering-plan|decisions|implementation/.*)\.md`, OR if any commit message body cites `features/<feature>/`, OR if the PR description links to a feature directory, the PR is feature-scoped — capture `<feature>`.
-2. For each detected `<feature>`, `Read` `features/<feature>/decisions.md` if it exists.
-3. For each surviving finding, scan `decisions.md` for entries where ALL of:
+1. Determine feature-scope exactly as Stage 1.5 did (reuse its `<feature>`): any path matching `features/<feature>/(brief|engineering-plan|decisions|implementation/.*)\.md`, OR a commit-message body citing `features/<feature>/`, OR the PR description linking a feature directory.
+2. For each detected `<feature>`, `Read` `features/<feature>/decisions.md` if it exists. **Read only the `## Active (bound)` section** when the log uses the Active/Archived split; in a flat log, consider only entries whose `Status:` is `bound`.
+3. **Class-A findings are exempt — do NOT run them through the scan.** A Stage 1.5 brief-conformance finding (`BRIEF_NONGOAL_TRESPASS` / `BRIEF_GOAL_UNDELIVERED` / `SURFACE_PARITY_GAP`) or a persona `[premise inversion: goal-outcome]` finding is Class A per `principles.md` § Cross-artifact authority order; a `Status: bound` `decisions.md` entry cannot drop it (a bound entry that *itself* trespasses the brief is the defect, not a shield). Only the Class-B/C findings below are eligible for retraction.
+4. For each surviving **Class-B/C** finding, scan the Active bound entries for ones where ALL of:
    - The entry's `Decision:` subject substring-matches the finding's `path_or_section` (matching identifier, file path, or quoted phrase fragment ≥4 words from the finding body).
-   - The entry's `Status:` is `bound` (case-insensitive).
+   - The entry's `Status:` is `bound` (case-insensitive) — NOT `superseded`/`obsolete` (those live in `## Archived` and never arbitrate, per `principles.md` § What counts as a bound entry).
    - The finding contradicts the bound resolution (the persona is filing a fix that would *undo* the bound decision, or the finding asserts the opposite of what was bound).
-4. When all three match, **drop the finding** with note `RETRACTED: contradicts bound decisions.md entry "<entry subject>" (<entry date>); entry's Why: "<verbatim Why paragraph, capped at ~200 chars>"`. The verdict's `### Retractions` block surfaces the retraction so the user sees their prior arbitration was honored.
+5. When all three match, **drop the finding** with note `RETRACTED: contradicts bound decisions.md entry "<entry subject>" (<entry date>); entry's Why: "<verbatim Why paragraph, capped at ~200 chars>"`. The verdict's `### Retractions` block surfaces the retraction so the user sees their prior arbitration was honored.
 
 This priority exists because `decisions.md` is the project's converged memory across sessions and survives PR rotation, cache wipes, and machine swaps — `recently_resolved_blockers` only holds for `carry_forward_until_invocation + 2` rounds and resets on every state-file loss. Authority order: `decisions.md` > `recently_resolved_blockers` > prior verdict text.
 
@@ -679,14 +796,20 @@ Before posting the verdict, verify the convergence machinery actually executed. 
 
 - [ ] **Did Round Memory load run?** Was the state file Read attempted? If `invocation_number > 1`, was the `file_diff_report` computed and emitted in the audit? Was `prior_blocker_audit` populated?
 - [ ] **If state was reconstructed, did the reconstruction path fire?** When the state file was missing but PR comments implied prior verdicts, was the reconstruction path entered, were prior blockers extracted from the most recent verdict body, was `last_diff_files` rebuilt (or marked empty with `force_push_detected: true`), and was `state_source: reconstructed_from_pr_comments` recorded in the audit?
+- [ ] **Did Stage 1.5 run when the PR is feature-scoped?** If any `features/<feature>/` path was touched (or a commit/PR-body cited a feature) AND `features/<feature>/brief.md` exists: was the at-risk-Goal selection recorded, was the Brief-conformance Prosecutor spawned, was one Scope-fidelity Adversary spawned per selected at-risk Goal (in isolation, never batched), and did every filed `SURFACE_PARITY_GAP` / `BRIEF_NONGOAL_TRESPASS` / `BRIEF_GOAL_UNDELIVERED` carry verbatim `brief_quote` + `contradicting_evidence`? A feature-scoped PR whose audit says `brief_conformance: passed` with zero adversaries spawned is a red flag — either no at-risk Goal was touched (state why) or the gate was skipped. If NOT feature-scoped, `brief_conformance: n_a` is correct.
 - [ ] **Did persona prompts use the template?** For each persona Agent that was launched, can you point to the moment you Read `~/.claude/skills/_review-common/agent-prompt.md` and the moment you substituted the slots? If you cannot, you authored a custom prompt and the convergence machinery never reached the personas.
 - [ ] **Did personas honor the premise-interrogation passes?** Each persona's output should contain either `premise_interrogation: passed` OR one or more findings prefixed `[premise inversion: diff-baseline]` / `[premise inversion: pr-description]`. If neither appears in any persona's output, the prompt did not include the extensions block.
 - [ ] **Did `invocation_number > 1` trigger round-memory tagging?** Each finding from each persona should carry `targets_unchanged_file` and `regression_risk` fields when invocation > 1. Zero findings carrying these tags = personas did not receive the round-memory preamble.
 - [ ] **Did the round-memory tag filter actually fire?** If `invocation_number > 1` and Round Memory reported any unchanged files, the verdict's "Round-memory retractions" line should be non-zero OR there should be an explicit explanation why none of the findings matched unchanged-file criteria.
 - [ ] **Did the classification step consult prior_blocker_audit AND recently_resolved_blockers?** If any prior blocker was carrying-forward or reclassification-pending, the verdict's "Prior-classification downgrades" line should reflect it. If any new finding lands on a span that appears in `recently_resolved_blockers`, the rendered blocker line MUST include the prior `user_decision` and `current_reclassification_justification`.
 - [ ] **Did post-fix premise verification run?** If Stage 3 edited any comment / docstring / schema directive / plan prose, did the orchestrator enumerate the in-scope added/rewritten lines, apply LLM-judgment claim identification (NOT a keyword pre-filter), verify each identified claim against the repo, and record `<lines reviewed>/<claims identified>/<survived>/<inverted>` for the verdict attestation? An attestation that says "0 claims identified" on a Stage 3 that rewrote multiple prose lines is a red flag — re-run with closer attention.
+- [ ] **Did the Structural Sweep run every applicable universe?** `structural_sweep.ran` is true unless `baseline_red`; `universes_run` + `universes_skipped` + `universes_inherited_clean` accounts for all three PR universes (L guard liveness, T changed-surface tests, Z mutation authorization); every run universe recorded `members_enumerated`, a non-empty `cells` list, and a non-empty `sections_read`; every Universe-L cell carries a non-empty `traced` field (a cell judged on the guard's own line alone is unjudged — re-run that universe); out-of-ownership members were filed `OPEN_QUESTION` rather than silently swept; and every GAP appears in the fix set / a commit / a blocker. **This check is independent of the invocation's finding count** — a zero-finding invocation that skipped the stage is non-compliant, which is exactly the case it exists for. This is the last gate before merge, so an unfiled class here ships.
+- [ ] **Did the Class Sweep run for every recurring category?** For every surviving Stage 2 finding tagged `class_notion: recurring_category` (or `propagated_identity` with a >1 peer-set), was one sweep agent spawned per distinct class, did each record a `peer_set_size` and non-empty `swept_clean` (instances with empty `swept_clean` on a multi-member peer-set = the diff/blast-radius was not walked; re-run that agent), were siblings bounded by PR ownership (in-diff or blast-radius; out-of-ownership siblings filed as `OPEN_QUESTION`, not silently swept), and does every surviving sibling appear in the fix set / a commit / a blocker? A surviving `recurring_category` seed with `sweep_agents_spawned: 0` means the sub-pass was skipped — run it before posting.
+- [ ] **Did every sweep agent perform the peer-set challenge?** (`class-sweep.md` § The sweep, Method step 1.) Each category must record a non-empty `bare_invariant`, both `peer_set_handed` and `peer_set_walked`, and an explicit `peer_set_widened` flag with a justification when true. A `bare_invariant` that merely restates the seed's wording, or a `peer_set_walked` copied from `peer_set_handed` with no evidence the supertype question was asked, means step 1 did not run — re-run that agent. This matters because a faithfully-walked *narrow* peer-set reports clean while leaving the class open, and that failure is invisible in the instance counts. At this layer the widened set is still bounded by PR ownership: widen the *invariant*, then clip to in-diff plus blast radius, and file out-of-ownership members as `OPEN_QUESTION` exactly as the existing ownership rule requires.
 - [ ] **Did same-round focused re-prosecution run when triggered?** If ANY of Stage-3-fix-count > 0, falsified-claim-count > 0, or HEAD-changed is true, the re-pass is mandatory: focused agents spawned on the orchestrator's diff hunks, all template substitutions inherited from Stage 2, findings filtered through round-memory tags + critical-pair, fixes applied + post-fix premise verification re-run on the new edits. The verdict's "Same-round focused re-prosecution" line should reflect agents-spawned + findings-raised + fixes-applied. A line that says "skipped" while Stage 3 wrote fixes is a red flag.
 - [ ] **Did Priority 1 decisions-log-first carry-forward fire when feature-scoped?** If the diff touches `features/<feature>/`, OR commit messages cite a feature, OR the PR description links to a feature: was `features/<feature>/decisions.md` Read, were findings checked against `bound` entries, were contradicting findings dropped with verbatim citation in the verdict's `### Retractions` block? An attestation that says feature-scoped: yes but checked: 0 is a red flag — either the consultation didn't run or the feature dir has no decisions.md (in which case checked: 0 is honest, but the attestation should say so).
+- [ ] **Did the PR test plan get executed and ticked off?** If the PR description has a `## Test plan`, was every item run against the final HEAD, were passing boxes ticked via `gh pr edit --body-file`, were drifted counts corrected, and were failing items either fixed in-PR or escalated as blockers? A verdict posted with runnable test-plan boxes still unchecked — or ticked without actually running the item — is a SKILL.md violation. If the PR has no test plan, record `test_plan: none`.
+- [ ] **Did the remediation-completeness questions run on every `resolved` prior blocker?** The Prior-blocker consistency check answers *closed?*; the two further questions answer *swept?* and *recorded?*. On `invocation_number > 1`, `remediation_completeness` must hold one entry per prior blocker, each with a non-empty `coupled_sites_checked` and an explicit `decisions_entry` (a heading, `none` with its class, or `n/a — not feature-scoped`). An entry marked `resolved` with an empty `coupled_sites_checked` answered only the first question — a one-line fix at the cited line with every sibling call site untouched presents exactly that way — so re-run it. Every `REMEDIATION_INCOMPLETE` / `DECISIONS_PROVENANCE_GAP` filed must appear in the verdict and must NOT have been dropped by carry-forward.
 - [ ] **Did Persist state file run?** Was the state file actually Written? Capture the `path` and the `sha256` (or word count + first 80 chars hash via Read after write) so the verdict template's "State persisted" attestation line is honest, not invented.
 
 If any checkbox is "no", stop. Surface to the user: "Compliance self-check failed at step <X>. Re-run the missed step or re-spawn personas with correct prompt before posting verdict." Do NOT post a verdict whose attestations would be lies.
@@ -696,6 +819,8 @@ This gate is the model's self-honesty test. SKILL.md is a request form — the o
 ### Render verdict and post to PR
 
 Verdict gate logic in `_review-common/blocker-classes.md`. Compute Tier-1 weight (CRITICAL=8, HIGH=4, MEDIUM=2, LOW=1) and Tier-2 weight after fix application.
+
+**Final line — verdict banner.** After rendering the verdict output and posting it to the PR, run the shared verdict-banner script and emit its output verbatim (`~/.claude/skills/_review-common/blocker-classes.md` § Verdict banner) as the **very last** thing in your response, so the verdict is visible without scrolling up past the detail.
 
 Post a single PR comment:
 
@@ -714,8 +839,10 @@ gh pr review --comment --body "$(cat <<'EOF'
 - **Persona prompt template used:** yes (loaded `~/.claude/skills/_review-common/agent-prompt.md`; substituted skill_specific_extensions verbatim)
 - **Round-memory preamble injected:** yes / n_a (round 1, no prior state)
 - **Prior_blocker_audit consulted before classification:** yes / n_a (no prior blockers)
-- **Premise interrogation (diff-baseline + pr-description) acknowledged by personas:** <n>/<N> personas (each persona either filed `premise_interrogation: passed` or one or more `[premise inversion: ...]` findings)
+- **Stage 1.5 brief-conformance:** feature-scoped: yes/no; at-risk Goals touched by this PR: <n>; Scope-fidelity Adversaries spawned (one per Goal, isolated): <n>; Brief-conformance Prosecutor: passed/filed; findings — SURFACE_PARITY_GAP: <n>, BRIEF_NONGOAL_TRESPASS: <n>, BRIEF_GOAL_UNDELIVERED: <n> | n/a (not feature-scoped / no brief.md)
+- **Premise interrogation (diff-baseline + pr-description + goal-outcome) acknowledged by personas:** <n>/<N> personas (each persona either filed `premise_interrogation: passed` or one or more `[premise inversion: ...]` findings; goal-outcome sub-pass runs on feature-scoped PRs only)
 - **Post-fix premise verification:** <n> in-scope lines reviewed; <n> claims identified; <n> survived; <n> filed as FIX_INTRODUCED_PREMISE_INVERSION (working tree left dirty)
+- **PR test plan executed:** <n>/<n> items run against HEAD <sha> and ticked on the PR; <n> counts corrected; <n> failures escalated | n/a (PR has no `## Test plan`)
 
 If any attestation reads "no", you posted a verdict whose convergence machinery did not run. That is a SKILL.md violation, not a verdict the user should trust.
 
@@ -729,9 +856,14 @@ If any attestation reads "no", you posted a verdict whose convergence machinery 
 - Round Memory: invocation N+1; <k> files unchanged since last invocation; <m> modified; <a> added
 - Prior-blocker audit: <r> resolved; <c> carrying forward; <p> reclassification-pending
 
+### Stage 1.5 brief-conformance (feature-scoped PRs)
+- Feature: <feature> | n/a (not feature-scoped / no brief.md)
+- At-risk Goals touched by this PR: <list>; Scope-fidelity Adversaries spawned: <n>; Prosecutor: passed/filed
+- Findings: SURFACE_PARITY_GAP: <n>; BRIEF_NONGOAL_TRESPASS: <n>; BRIEF_GOAL_UNDELIVERED: <n>
+
 ### Stage 2 panel
 - Personas run: <list>
-- Premise interrogation: <p> personas filed `premise_interrogation: passed`; <i> premise inversions filed (diff-baseline: <n>, pr-description: <n>)
+- Premise interrogation: <p> personas filed `premise_interrogation: passed`; <i> premise inversions filed (diff-baseline: <n>, pr-description: <n>, goal-outcome: <n>)
 - Total findings raised: <count> (CRITICAL: n, HIGH: n, MEDIUM: n, LOW: n)
 - Findings retracted by critical-pair policy: <count>
 - Round-memory retractions: unchanged-file auto-retract: <n>; regression_risk severity downgrades: <n>
@@ -741,18 +873,32 @@ If any attestation reads "no", you posted a verdict whose convergence machinery 
 ### Stage 3 fixes applied
 - <commit sha>: <one-line description> — addressed <findings>
 - <commit sha>: <one-line description> — addressed <findings>
+- Class sweep: <skipped (no sweep-eligible categories) | ran with <n> agents; siblings_found: <n>; siblings_after_filter: <n>; out-of-ownership siblings → OPEN_QUESTION: <n>>
 - Same-round focused re-prosecution: <skipped (no orchestrator edits) | ran with <n> agents on <m> diff hunks; findings raised: <f>; retracted: <r>; STABLE_DISAGREEMENTs: <s>; fixes applied: <a>; second-pass falsified claims: <p>>
 
-### Class > line audit
-For each class addressed:
-- Class: <name>
-- Universe enumerated: <list>
-- Resolutions: <hit → fix or stable rationale>
+### Structural sweep (unseeded)
+Always rendered unless `baseline_red` — an all-clean sweep is the evidence the universes were covered, and it is what makes an `APPROVED` verdict mean more than "no persona noticed anything".
+- Universe: <name> — <members_enumerated> members: <closed> closed, <gap> gap, <na> n/a, <undetermined> undetermined
+- Skipped: <universe> (<reason>) · Inherited clean: <universe> (from invocation <n>)
+- Out-of-ownership members filed as OPEN_QUESTION: <n>
+- Gaps promoted to findings: <n> (<severities>)
+
+### Class sweep audit
+For each class swept (per the Stage 3 Class Sweep sub-pass; omit block when class_sweep.ran=false):
+- Class: <name> (<class_notion>) — bare invariant: <bare_invariant>
+- Peer-set: handed <peer_set_handed> → walked <peer_set_walked> <(widened — <widening_justification>) | (confirmed widest)>
+- Peer-set walked: <n> members (diff files / callsites / blast radius); swept clean: <n>
+- Instances: <seeds> seed + <siblings_found> sibling (<siblings_after_filter> survived round-memory + critical-pair filter)
+- Resolutions: <every instance → fix, escalated blocker, or out-of-ownership OPEN_QUESTION>
+- Singleton classes recorded (no peer-set): <list, or none>
 
 ### Retractions
 - <finding> → retracted because <round-memory unchanged-file / critical-pair policy / pre-resolved by Stage 1>
 
 ### Blockers (if NEEDS USER INPUT)
+- [SURFACE_PARITY_GAP] <Goal, verbatim> — delivered code serves the outcome over <slice> but the Goal's domain is <domain> (axis: subset-of-domain | weaker-substitute-basis | premature-action-before-basis). Resolution: extend coverage in <chunk/follow-up>, OR scope the Goal down in the brief. (Class A — not retracted by a bound decision.)
+- [BRIEF_NONGOAL_TRESPASS] <Non-goal, verbatim> — delivered code does what the Non-goal forbids at <path:line>. Resolution: drop the trespassing code, OR amend the brief. (Class A.)
+- [BRIEF_GOAL_UNDELIVERED] <Goal, verbatim> — PR claims to deliver this Goal but ships only enabling code; the outcome is produced nowhere. Resolution: deliver the outcome, OR amend the brief. (Class A.)
 - [STABLE_DISAGREEMENT] <finding> — Persona A: <fix A>; Persona B: <fix B>. Pick one.
 - [OPEN_QUESTION] <finding> — <question>{prior_classification: <old> if reclassified}
 - [POLISH_PLATEAU] <finding> — non-blocking; ship is acceptable.
@@ -786,7 +932,8 @@ These hooks would convert SKILL.md compliance from "honor system" to "enforced."
 
 - **Stage 1 is mandatory.** No persona prosecutes without the audit report.
 - **Round Memory load is mandatory.** Skipping it disables file-hash diff and prior-blocker consistency, returning the skill to pre-fix thrash mode. State file lives at `~/.claude/cache/review-state/<repo-slug>__pr-<N>.json` (NOT in the project repo).
-- **Stage 2 premise interrogation is mandatory.** Both the diff-baseline and PR-description sub-passes MUST run. A persona producing zero premise inversions must explicitly state `premise_interrogation: passed`.
+- **Stage 1.5 Brief-conformance gate is mandatory on feature-scoped PRs.** When the PR touches `features/<feature>/` (or a commit/PR-body cites a feature) AND `features/<feature>/brief.md` exists, the gate runs before Stage 2: one Brief-conformance Prosecutor + one Scope-fidelity Adversary per at-risk Goal the PR touches, each adversary spawned in ISOLATION (never batched — the isolation is validated to catch narrowings a batched call misses). Judges the delivered diff, not a plan. Its `SURFACE_PARITY_GAP` / `BRIEF_NONGOAL_TRESPASS` / `BRIEF_GOAL_UNDELIVERED` findings are Class A — they enter Stage 2 as pre-resolved hard findings personas cannot retract, are exempt from Priority-1 decisions-log carry-forward, and are escalated (never auto-fixed — extending scope is a Forbidden fix). Non-feature-scoped PRs record `brief_conformance: n_a` and skip it.
+- **Stage 2 premise interrogation is mandatory.** The diff-baseline and PR-description sub-passes MUST run on every PR; the goal-outcome sub-pass MUST additionally run on feature-scoped PRs (concrete single-surface Goals the Stage 1.5 at-risk filter excluded). A persona producing zero premise inversions must explicitly state `premise_interrogation: passed`.
 - **Stage 2 agents return fix lists; never edit files or commit.** All edits are applied by Stage 3 in one pass.
 - **Stage 3 applies round-memory tag filtering before critical-pair filtering.** Findings tagged `targets_unchanged_file: yes` without (a)+(b) justification are auto-retracted; findings tagged `regression_risk: yes` without a named failure mode are severity-downgraded.
 - **Stage 3 applies critical-pair policies before applying fixes.** Findings contradicting a policy are retracted, not relitigated.
@@ -795,6 +942,7 @@ These hooks would convert SKILL.md compliance from "honor system" to "enforced."
 - **Stage 3 same-round focused re-prosecution is mandatory** when ANY of: orchestrator-applied Stage 3 fix count > 0, post-fix premise verification falsified-claim count > 0, new commits created by Stage 3 (HEAD changed). Skipping it lets persona-class defects in orchestrator-rewritten code/prose bake in and surface as fresh blockers next invocation. Bounded: exactly one re-pass on the diff hunks Stage 3 wrote.
 - **Stage 3 carry-forward consultation uses two priorities in order when the PR is feature-scoped** (any path under `features/<feature>/` touched, OR commit/PR-body cites a feature dir). Priority 1: consult `features/<feature>/decisions.md` for findings contradicting bound entries — drop them with citation. Priority 2: prior-blocker classification consistency check against `prior_blocker_audit`. Authority order: `decisions.md` > `recently_resolved_blockers` > prior verdict text. Non-feature-scoped PRs skip Priority 1 and go directly to Priority 2.
 - **Stage 3 enforces prior-blocker classification consistency.** A blocker class flip across invocations without justification is downgraded to `OPEN_QUESTION` so the user arbitrates.
+- **Stage 3 executes the PR's `## Test plan` and ticks it off before the verdict.** Every runnable item is run against the final post-fix HEAD; passing boxes are ticked and drifted counts corrected via `gh pr edit --body-file`; a failing item is fixed in-PR or escalated as a blocker (`FIX_INTRODUCED_REGRESSION` / `OPEN_QUESTION`). Re-running the generic gates is NOT a substitute — the test plan covers PR-specific surface the gates miss (a new CLI/script, the other workspace's suite, a `bash -n` parse, an operator exit-code check). Never tick a box for an item you did not run; never post the verdict with runnable items unexecuted. PR has no `## Test plan` → record `test_plan: none`.
 - **Stage 3 persists state file regardless of verdict, before posting the verdict.** APPROVED still gets written so the next invocation after additional commits applies round-memory gates correctly. State write uses the **Write** tool, not shell redirection.
 - **Class > line is a Stage 2 obligation.** Personas declare class + universe at finding time; Stage 3 fixes the entire universe.
 - **Never** mark APPROVED while any blocker class is non-empty.

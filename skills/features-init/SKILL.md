@@ -40,7 +40,7 @@ Bootstraps `features/` in a target project: the `README.md` process doc and the 
 - `brief.md` — Stage 1 product brief.
 - `engineering-plan.md` — Stage 2 chunk graph + architecture contract.
 - `chunk.md` — Stage 3 per-chunk implementation plan.
-- `decisions.md` — append-only decision log.
+- `decisions.md` — append-only decision log; entries carry a `Status:` line (`bound` | `superseded by "<title>" (<date>)` | `obsolete`) and split into `## Active (bound)` / `## Archived (superseded / obsolete)` so scanners treat only Active bound entries as authoritative.
 
 To update the canonical templates: edit the bundled files in place. Next invocation in any project picks up the changes.
 

@@ -1,6 +1,6 @@
 ---
 name: engineering-plan-review-v2
-description: Single-pass review of a feature's engineering-plan.md. Refuses artifacts (engineering plan or upstream brief) in `Status: needs-user-input` state. Gated on `/plan-lint`. Five phases: Round Memory loads prior-round state with plan-growth and section-diff gates; Ground Truth grounds the plan in repo + brief reality and audits decision closure against decisions.md; Persona Prosecution runs personas in parallel with mandatory premise interrogation (repo-state + brief-environment sub-passes); Imagined-Implementer surfaces undecided cross-chunk decisions as IMPLEMENTABILITY_GAP; Orchestrator applies fixes with cross-file authority `decisions.md > brief.md > engineering plan`, runs post-fix premise verification + SAME-ROUND focused re-prosecution on diff hunks (≤1 re-pass; bounded), runs decisions-log-first carry-forward, classifies remaining, renders three-state verdict — CLOSED (shape-correct + decisions bound; unblocks per-chunk plans), APPROVED (shape-correct, decisions undecided), or NEEDS USER INPUT. Sister to /plan-review-v2 (chunk-plan layer).
+description: Adversarial single-pass review of a feature's `engineering-plan.md` — the chunk-DAG layer between the brief and per-chunk plans. Applies fixes directly and returns CLOSED, APPROVED, or NEEDS USER INPUT with labeled blockers. Use after `/engineering-plan-author` lands a clean draft, before chunk plans are written. Sister to `/plan-review-v2` (chunk-plan layer) and `/brief-review-v2` (brief layer).
 user-invocable: true
 ---
 
@@ -13,9 +13,15 @@ This is the engineering-plan layer. Sister skill `/plan-review-v2` reviews chunk
 ## Shared scaffolding
 
 - `~/.claude/skills/_review-common/principles.md` — stance, banned rationalizations, severity/tier, plan style rules
+- `~/.claude/skills/_review-common/round-memory.md` — state file, load, capture priority, persist
+- `~/.claude/skills/_review-common/orchestrator.md` — the shared Stage 3 spine
 - `~/.claude/skills/_review-common/agent-prompt.md` — persona-agent prompt template
-- `~/.claude/skills/_review-common/critical-pairs.md` — active subset for engineering plan review: `P-CLASS-SCOPE, P-FULL-FILE, P-EP-IMPL-DETAIL, P-EP-BRIEF-GOALS, P-EP-VERIFIED-BY, P-EP-RISK-DEPTH, P-EP-DECISION-LOC`
+- `~/.claude/skills/_review-common/class-sweep.md` — seeded sibling-enumeration stage (expands a found class)
+- `~/.claude/skills/_review-common/structural-sweep.md` — unseeded matrix-completion stage (discovers unfiled classes)
+- `~/.claude/skills/_review-common/repo-reality-sweep.md` — codebase-derived stage (checks the plan's premises about code by reading the code)
+- `~/.claude/skills/_review-common/critical-pairs.md` — active subset for engineering plan review: `P-CLASS-SCOPE, P-FULL-FILE, P-EP-IMPL-DETAIL, P-EP-BRIEF-GOALS, P-EP-VERIFIED-BY, P-EP-RISK-DEPTH, P-EP-DECISION-LOC, P-EP-SIBLING-CODELIVERY`
 - `~/.claude/skills/_review-common/blocker-classes.md` — blocker registry + verdict gate (three-state verdict: CLOSED / APPROVED / NEEDS USER INPUT)
+- `~/.claude/skills/_plan-common/layout.md` — flat vs tracked feature layout, plan-root resolution, state-slug derivation. **Read before resolving any argument** — a feature may have more than one engineering plan.
 
 ## Tribunal stance (engineering-plan-specific)
 
@@ -26,38 +32,45 @@ This is the engineering-plan layer. Sister skill `/plan-review-v2` reviews chunk
    **Carve-out — brief premises are NOT canonical.** The brief's `## Problem` (or equivalent) section makes load-bearing claims about the operating environment (live users, concurrency, monitoring, SLAs, deployment posture). When those environmental claims contradict project memory / `CLAUDE.md` / source-of-truth files, the brief is solving a phantom problem and the plan inherits the phantom. The brief-environment premise check inside Persona Prosecution interrogates these claims and may file a `brief-environment` RESET that short-circuits the review — see Persona Prosecution below.
 2. **The repo** is the contract for *how* the plan can be executed. Architecture claims, file paths, existing patterns, CI workflows, and chunk dependencies must match the branch the plan executes on.
 
+**Sibling tracks are one feature.** When this feature has more than one engineering plan, the plan under review is one track of a co-delivered whole (`~/.claude/skills/_plan-common/layout.md`) — nothing goes live on a merge, so the feature ships only through a deliberate whole-feature deploy. Do not review the track as independently shippable. A track delivering no brief Goal on its own, a chunk consumed only by a sibling track, and cross-track wiring left to the sibling's own cycle are the feature's structure, not orphan / integration / go-live / undelivered-Goal defects — file none of them (`~/.claude/skills/_review-common/principles.md` § Sibling-plan co-delivery, `_review-common/critical-pairs.md` § P-EP-SIBLING-CODELIVERY). Coverage still binds: a Goal **no** sibling track delivers is a real gap, and a cross-track shared contract whose export and import have drifted is a real finding.
+
 ## Usage
 
 ```
 /engineering-plan-review-v2 <plan-path> [--personas <p1> <p2> ...]
-/engineering-plan-review-v2 <feature-name>          # resolves to features/<feature-name>/engineering-plan.md
+/engineering-plan-review-v2 <feature-name>           # flat layout; tracked → lists tracks, asks
+/engineering-plan-review-v2 <feature-name>/<track>   # one specific plan of a tracked feature
 /engineering-plan-review-v2                          # search features/ for active engineering plans, ask which
 ```
 
 **Examples:**
 
 ```
-/engineering-plan-review-v2 author-tmdb-hydration
-/engineering-plan-review-v2 features/author-tmdb-hydration/engineering-plan.md
-/engineering-plan-review-v2 author-tmdb-hydration --personas architecture ai-development product
+/engineering-plan-review-v2 user-profile-sync
+/engineering-plan-review-v2 team-chat/chat-core
+/engineering-plan-review-v2 features/team-chat/plans/chat-core/engineering-plan.md
+/engineering-plan-review-v2 user-profile-sync --personas architecture ai-development product
 /engineering-plan-review-v2
 ```
 
 ## Argument parsing
 
-Split `$ARGUMENTS` on whitespace. Classify each token:
+Split `$ARGUMENTS` on whitespace. Classify each token, in this order:
 
 - `--personas` → all subsequent non-path tokens are persona names.
-- Token contains `/` or ends with `.md` → plan path.
-- Token matches a directory name under `features/` → resolves to `features/<token>/engineering-plan.md`.
-- Otherwise → treated as a feature name; if `features/<token>/engineering-plan.md` doesn't exist, stop and report.
+- `<feature>/<track>` where `features/<feature>/plans/<track>/engineering-plan.md` exists → that plan root. **Test this before the path rule** — a track reference contains a `/` but is not a filesystem path.
+- Token ends with `.md`, or starts with `./` / `/` / `features/` → plan path.
+- Token matches a directory name under `features/` → resolve its plan roots per `_plan-common/layout.md`. Exactly one → review it. Two or more → list the tracks with each plan's `Status:` field and ask which; do NOT pick one.
+- Otherwise → treated as a feature name; if it resolves to no plan root, stop and report.
 
-No arguments → enumerate `features/*/engineering-plan.md` and list with feature name + brief's `Status:` field. Ask which to review.
+No arguments → enumerate `features/*/engineering-plan.md` **and** `features/*/plans/*/engineering-plan.md`, list with feature name (plus track, where tracked) and the brief's `Status:` field. Ask which to review.
+
+Throughout the rest of this skill, **`<plan-root>`** means the directory holding the resolved `engineering-plan.md` — `features/<feature>/` under the flat layout, `features/<feature>/plans/<track>/` under the tracked one. `brief.md` and `decisions.md` always live at `features/<feature>/`, never in the plan root.
 
 ## Persona resolution
 
 ### Explicit personas
-Load each from `personas/{name}.md`. Reviewed by every listed persona in parallel. Missing persona file → stop and report.
+Load each from `personas/{name}.md`, resolved relative to the **project root (cwd — the repository being reviewed)**, NOT the skill directory. The persona files are project-specific and live at the repo root (`./personas/*.md`); do not look under `~/.claude/skills/engineering-plan-review-v2/`. Reviewed by every listed persona in parallel. If a listed persona file is genuinely absent from the project root → stop and report; do NOT silently fall back to uncalibrated inline archetype lenses (that produces an under-calibrated verdict indistinguishable from a real one).
 
 ### Auto-assignment (no `--personas`)
 Default tribunal is **3 personas in parallel**:
@@ -79,11 +92,22 @@ Status-frontmatter check        (deterministic, hard short-circuit, runs first)
 Structural Lint Gate            (deterministic, hard short-circuit)
   ↓ runs /plan-lint; FAIL → emit STRUCTURAL_LINT_FAILED, stop
 Round Memory Pass               (deterministic, no LLM judgment)
-  ↓ loads ~/.claude/cache/review-state/<feature>.json; computes
+  ↓ loads ~/.claude/cache/review-state/<feature>[__<track>]__engineering-plan.json; computes
   ↓ plan_growth_flag and section_diff_report for round_number > 1
+  ↓ runs the Remediation-completeness pass over the prior round's prior_blockers —
+  ↓   closed? swept into every coupled site? arbitration recorded in decisions.md?
+  ↓   files REMEDIATION_INCOMPLETE / DECISIONS_PROVENANCE_GAP as pre_resolved_hard_findings.
+  ↓   This is the between-round counterpart to post-fix verification, which sees only
+  ↓   the orchestrator's own edits and is structurally blind to user remediation.
 Ground Truth Pass               (deterministic, no LLM judgment)
   ↓ produces audit_report (incl. decision-closure audit with
   ↓ prior-classification consistency check against decisions.md)
+Brief-conformance Audit         (Stage 1.5; parallel subagent batch, HARD findings)
+  ↓ spawns 1 Brief-conformance Prosecutor + 1 Scope-fidelity Adversary per at-risk Goal
+  ↓   (isolated, one Goal each; see _review-common/brief-conformance-prosecutor.md)
+  ↓ files BRIEF_NONGOAL_TRESPASS + BRIEF_GOAL_UNDELIVERED (prosecutor) + SURFACE_PARITY_GAP (adversaries)
+  ↓ merges all findings; enters Stage 2 as pre_resolved_hard_findings
+  ↓ exempt from decisions-log-first carry-forward retraction (Class A per principles.md)
 Persona Prosecution             (LLM judgment, M parallel agents)
   ↓ produces fix_lists; each persona runs premise interrogation
   ↓ (repo-state + brief-environment sub-passes) + standard prosecution.
@@ -91,11 +115,34 @@ Persona Prosecution             (LLM judgment, M parallel agents)
 Imagined-Implementer Dry Run    (LLM judgment, 1 agent)
   ↓ produces undecided_decisions (with severity_test) +
   ↓ needed_identifiers + scope_reduction_candidates
+  ↓ (chunk selected by cross-chunk-contract density, NOT dep-order)
+Structural Sweep                (UNSEEDED matrix completion, 1 agent per universe)
+  ↓ Universe L — every gate × every condition: is every failing state exitable?
+  ↓ Universe P — every destructive path × every protection the plan itself requires
+  ↓ runs even when the round produced ZERO findings: it discovers classes nobody
+  ↓   filed, which the seed-driven Class Sweep structurally cannot reach
+  ↓   (_review-common/structural-sweep.md); GAPs become same-round findings
+Repo Reality Sweep              (CODEBASE-derived, 1 agent per chunk, all 3 questions)
+  ↓ Universe R — what each chunk REPLACES: is the divergence from the incumbent stated?
+  ↓ Universe C — what CALLS what the chunk touches: is every caller accounted for?
+  ↓ Universe D — what the chunk newly IMPORTS: does the plan's use survive the
+  ↓   dependency's real guarantee, at the plan's scale?
+  ↓ every other stage enumerates from the ARTIFACT; this one enumerates from the REPO,
+  ↓   so it reaches claims the plan omits rather than claims it makes
+  ↓   (_review-common/repo-reality-sweep.md); GAPs file REPO_PREMISE_GAP
 Orchestrator Decision           (deterministic + judgment)
-  ↓ applies fixes, evaluates RESET corroboration (subclass-aware),
+  ↓ evaluates RESET corroboration (subclass-aware),
+  ↓ runs Class Sweep — one agent per distinct recurring category walks the
+  ↓   peer-set (every chunk row / Goal / Non-goal / closure row) for siblings,
+  ↓   promoting them to same-round findings (_review-common/class-sweep.md);
+  ↓   each agent first WIDENS the handed peer-set to the bare invariant's
+  ↓   supertype, so a narrowly-declared class does not narrow the sweep,
+  ↓ applies fixes,
   ↓ auto-retracts unchanged-section findings without (a)+(b) justification,
   ↓ downgrades regression_risk: yes findings, applies cross-file edits to
-  ↓ decisions.md / brief.md / engineering plan in authority order,
+  ↓ decisions.md / brief.md / engineering plan in class-aware authority order
+  ↓ (Class A: brief.md > decisions.md > plan; Class B: decisions.md > plan;
+  ↓  see _review-common/principles.md § Cross-artifact authority order),
   ↓ runs post-fix premise verification on rewritten prose,
   ↓ runs SAME-ROUND focused re-prosecution on diff hunks (≤1 re-pass) when
   ↓   any of: orchestrator fixes > 0, cross-file edits > 0, falsified > 0,
@@ -125,7 +172,7 @@ There is no inner loop. If the verdict is `APPROVED` (shape-correct but cross-ch
   partial draft would re-prosecute issues the author already surfaced.
 
   Resolve the blockers listed in `## Pending blockers`, then re-invoke
-  `/engineering-plan-author --rewrite <feature>`. The author skill removes the `Status:`
+  `/engineering-plan-author <feature>`. The author skill removes the `Status:`
   frontmatter on a successful CLOSED or APPROVED emission; re-invoke
   `/engineering-plan-review-v2` once the plan is back to no-Status-field state.
   ```
@@ -134,12 +181,12 @@ There is no inner loop. If the verdict is `APPROVED` (shape-correct but cross-ch
 
 The check is deterministic and runs before any LLM judgment or shell invocation. A `Status: needs-user-input` artifact never reaches the Structural Lint Gate.
 
-Also `Read` the upstream brief (`features/<feature>/brief.md`) and apply the same check: a `Status: needs-user-input` brief means the upstream is mid-cycle, and the engineering plan derived from it cannot be reviewed cleanly until the brief is hardened. Refuse with the same template, redirected at `/brief-author --rewrite <feature>`.
+Also `Read` the upstream brief (`features/<feature>/brief.md`) and apply the same check: a `Status: needs-user-input` brief means the upstream is mid-cycle, and the engineering plan derived from it cannot be reviewed cleanly until the brief is hardened. Refuse with the same template, redirected at `/brief-author <feature>`.
 
 ## Structural Lint Gate (MANDATORY, HARD SHORT-CIRCUIT)
 
 ```bash
-python3 ~/.claude/skills/plan-lint/lint.py features/<feature>/
+python3 ~/.claude/skills/plan-lint/lint.py <plan-root>
 ```
 
 Catches dependency cycles, unknown-slug deps, "and"-chunks, vague exit criteria, premature abstractions, position-encoded slugs, and unresolved Decisions Closure rows. File-level ownership across chunks is the chunk plan's responsibility — engineering-plan-layer ownership maps were removed by design (chunks are written just-in-time when filenames are knowable).
@@ -164,65 +211,39 @@ Catches dependency cycles, unknown-slug deps, "and"-chunks, vague exit criteria,
 
 ---
 
-## Round Memory Pass (MANDATORY, NO LLM JUDGMENT)
+## Round Memory Pass (no LLM judgment)
 
-This pass exists to break two thrash patterns documented in prior runs:
+Mechanism, schema, load, capture priority, and persist rules: `~/.claude/skills/_review-common/round-memory.md`. Read it. This section names what the engineering-plan layer adds — the plan-growth and section-diff gates, which exist because this layer's artifact *grows* each round as the user binds flagged decisions, and the next round would otherwise prosecute the remediation itself.
 
-1. **Prosecution of remediation artifacts** — the plan grows each round as the user binds previously-flagged decisions, and the next round files findings against the newly-added text.
-2. **Re-litigation of unchanged sections** — personas re-read the whole plan each round and surface "new" findings on text that was reviewed and accepted in the prior round.
+### State file
 
-Both are mitigated by carrying state across invocations.
+**Slug** — `<feature>__engineering-plan` under the flat layout, `<feature>__<track>__engineering-plan` under the tracked one.
 
-### State file location
+**Legacy-slug migration.** This skill historically wrote a bare `<feature>.json` with no layer suffix, which no author skill ever read — `/brief-author`, `/engineering-plan-author`, and `/plan-author` all consult `<feature>__engineering-plan.json` for warm carry-forward, so that channel was silently dead. On load: read the canonical slug first; if absent, fall back to `<feature>.json` and treat it as this plan's prior state. On persist: always write the canonical slug, and delete the legacy file once the canonical one is written. Report the migration on the verdict's `State source` line.
 
-State lives at `~/.claude/cache/review-state/<feature-slug>.json` (NOT in the project; survives worktrees; never committed). The slug is the basename of the feature directory (`features/<feature-slug>/`). Create the parent directory with `mkdir -p ~/.claude/cache/review-state` if missing.
+### Non-convergence tripwire (Feature-surface gate)
 
-### State file schema
+After loading state, evaluate the tripwire from `~/.claude/skills/_review-common/feature-surface-gate.md` § Non-convergence tripwire: `round_number >= 5` AND (open-blocker count not strictly decreasing over the last 3 entries of `open_blocker_history`, OR current `open_question_count >= 8`; cold-history fallback when the array is absent: `prior_blockers` length ≥ 8). Fired → file `FEATURE_NONCONVERGENCE` (HIGH), spawn the split-proposal agent (`model: "sonnet"`) per the gate file, and render the proposal as a director decision in the verdict — never auto-apply a split. On EVERY verdict, append `{round, open_blocker_count, open_question_count}` to `open_blocker_history` in the state file. A bound size-acceptance row re-arms the trigger at acceptance-round + 5; it never silences it. Additionally, Structural Lint recomputes the Feature-surface estimator (`chunk_count` / `dag_depth` / `cross_chunk_contract_total` / `open_decision_count` per the gate file) — breach files `FEATURE_SURFACE_EXCESS`; disagreement with the author sidecar's `feature_surface` field files `AUTHOR_GATE_DRIFT`, same convention as the chunk-surface cross-check.
 
-```json
-{
-  "feature_slug": "<slug>",
-  "last_review_at": "<ISO 8601 UTC>",
-  "last_verdict": "CLOSED | APPROVED | NEEDS_USER_INPUT",
-  "last_plan_word_count": <integer>,
-  "last_plan_sha256": "<hex>",
-  "section_hashes": {
-    "<section heading>": "<sha256 of section body, body only excluding heading>"
-  },
-  "round_number": <integer, 1-indexed>,
-  "prior_blockers": [
-    {
-      "blocker_class": "BRIEF_AMENDMENT_NEEDED | STABLE_DISAGREEMENT | OPEN_QUESTION | IMPLEMENTABILITY_GAP | UNCORROBORATED_RESET | FIX_INTRODUCED_PREMISE_INVERSION",
-      "path_or_section": "<plan section heading or file:line>",
-      "summary": "<one-line>",
-      "raised_in_round": <integer>,
-      "current_reclassification_justification": "<one-sentence repo-state justification when this blocker is being re-raised after prior resolution; absent on first appearance>"
-    }
-  ],
-  "recently_resolved_blockers": [
-    {
-      "blocker_class_when_resolved": "<class | RESOLVED>",
-      "path_or_section": "<plan section heading or file:line>",
-      "summary": "<one-line>",
-      "resolved_in_round": <integer>,
-      "user_decision": "<one-sentence rationale; see capture priority below>",
-      "carry_forward_until_round": <integer; defaults to resolved_in_round + 2>
-    }
-  ]
-}
-```
+**Extra fields** on top of the shared schema:
 
-**Backward-compat note.** Treat absence of `prior_blockers` and `recently_resolved_blockers` as `[]` when reading. The legacy field `prior_blockers_resolved_by_user` (if present) is migrated on first read into `recently_resolved_blockers`: preserve `summary` and `resolved_in_round`; default `blocker_class_when_resolved` to the migrated `blocker_class`; default `path_or_section` to `"(legacy entry — no path recorded)"`; default `user_decision` to `"No rationale recorded (legacy entry)"`; default `carry_forward_until_round` to `resolved_in_round + 2`. Drop the legacy field after migration.
+- `last_plan_word_count` — feeds the plan-growth check below.
+- `section_hashes` — `{ "<section heading>": "<sha256 of the section body, excluding the heading line>" }`, feeds the section-diff.
+- `track` — the track name, or `null` under the flat layout.
+- `remediation_completeness` — the per-blocker result of the Remediation-completeness pass (schema in that sub-pass). One entry per prior-round blocker, never sampled. Carried forward only as evidence for the next round's pass; never used to retract a finding.
+- `chunks_simulated` — `[{chunk_slug, round, verdict, row_hash}]`. Feeds the Imagined-Implementer's cross-round rotation: a chunk that returned `implementable` and whose chunk-index row hash is unchanged is excluded from selection, so successive rounds probe successively less-dense chunks instead of re-probing one forever. A changed row re-admits the chunk.
+- `repo_reality_sweep` — the per-chunk matrix summary (schema in `_review-common/repo-reality-sweep.md` § State recording). Carried forward on the **repo**, not the artifact: a clean chunk may be `inherited_clean` only when its chunk-index row hash is unchanged AND every path in its recorded `incumbent_files_blob_shas` still resolves to the same blob at HEAD. Copying the Structural Sweep's `section_hashes` key here would be a bug — it cannot see the code moving under the plan.
+- `structural_sweep` — the per-universe matrix summary (schema in `_review-common/structural-sweep.md` § State recording). Carried forward across rounds: a universe that returned all-clean may be recorded `inherited_clean` next round **only** when `section_hashes` is unchanged for every section that universe reads. A universe whose inputs moved is always re-run — that carry-forward is what keeps the stage's steady-state cost near zero on a stable plan.
 
-### Load prior state
+**Blocker classes seen here** — `BRIEF_AMENDMENT_NEEDED`, `IMPLEMENTABILITY_GAP`, `UNCORROBORATED_RESET`, `CHUNK_SURFACE_EXCESS`, `FEATURE_SURFACE_EXCESS`, `FEATURE_NONCONVERGENCE`, `AUTHOR_GATE_DRIFT`, plus the universal three.
 
-`Read` the state file. If it does not exist:
-- Set `round_number = 1`. No prior state. Skip the plan-growth and section-diff sub-passes; proceed to Ground Truth.
-- If it exists, set `round_number = <stored> + 1`.
+**Legacy field.** `prior_blockers_resolved_by_user`, if present, migrates on first read into `recently_resolved_blockers`: preserve `summary` and `resolved_in_round`; default `blocker_class_when_resolved` to the migrated `blocker_class`, `path_or_section` to `"(legacy entry — no path recorded)"`, `user_decision` to `"No rationale recorded (legacy entry)"`, and `carry_forward_until_round` to `resolved_in_round + 2`. Drop the legacy field after migrating.
+
+On a cold start, skip the plan-growth and section-diff sub-passes and proceed to Ground Truth.
 
 ### Plan-growth check (gate for Persona Prosecution)
 
-Compute current plan word count (`wc -w features/<feature>/engineering-plan.md`). Compare to `last_plan_word_count`.
+Compute current plan word count (`wc -w <plan-root>/engineering-plan.md`). Compare to `last_plan_word_count`.
 
 - **Growth ≤ 20%** → no marker; persona prosecution proceeds normally.
 - **Growth > 20%** → set `plan_growth_flag: true`. Persona Prosecution agent prompts MUST be prepended with:
@@ -255,37 +276,23 @@ Persona Prosecution agent prompts on `round_number > 1` MUST be prepended with:
 
 This is the **diff-based prosecution gate**. It does NOT blind personas to unchanged sections — they still read them for context — but it raises the bar for filing new findings against text that previously passed review.
 
+### Remediation-completeness pass (round_number > 1, MANDATORY)
+
+Post-fix premise verification and the same-round focused re-prosecution both cover **orchestrator-applied** fixes, inside the round that applied them. Neither can see the remediation the *user* writes **between** rounds, which is the larger surface: a `NEEDS USER INPUT` verdict hands back N blockers, the user edits the plan, and the next round meets that new text with nothing but ordinary prosecution latitude. The recurring failure is not a bad fix — it is a fix that lands in the one or two sections that motivated the blocker and never reaches the sites coupled to them, so the blocker reads as closed while its consequences are unbuilt. `prior_blockers` and `recently_resolved_blockers` are consulted only to *retract* re-prosecution; nothing verifies *completion*. This pass is that check, and it runs before Persona Prosecution so its findings enter Stage 2 as `pre_resolved_hard_findings`.
+
+For **every** entry in the prior round's `prior_blockers`, answer three questions and record the answer. Do not sample.
+
+1. **Closed?** Locate the text that closes it. Quote it. If nothing in the plan addresses the blocker, it is still open — carry it forward at its original class and severity rather than letting the round-counter launder it into a fresh finding.
+
+2. **Swept?** A remediation names a mechanism, a marker, an actor, a terminal action, or a contract. Enumerate the sites that mechanism *must* reach — every gate table that governs an operator flag, every protection enumeration, every rule that quantifies over the set it joined, every count or ordinal claim over a set it changed the size of, every Owns/Reads declaration for a file it touches, every sibling-plan span the Supersession sweep rule covers. Check each. A remediation present in its motivating section and absent from its coupled sites files `REMEDIATION_INCOMPLETE` (HARD, severity inherited from the original blocker). This is the pass's highest-yield question — a newly-added terminal action, chunk, or marker is the archetype, because it changes the size of sets that other sections state as fixed numbers.
+
+3. **Recorded?** An arbitration the user made to close a blocker belongs in `decisions.md`. Search for a bound Active-section entry covering it. A plan span that *cites* a `decisions.md` entry which does not exist is a `DECISIONS_PROVENANCE_GAP` (HARD, HIGH) — resolve every citation the round's modified sections introduced, by heading, not by date alone. An unrecorded arbitration cannot be retracted by Priority-1 carry-forward next round, so the same ground is re-prosecuted indefinitely; this question is what keeps the durable layer durable.
+
+Record the result as `remediation_completeness` in the state file: `{blocker, closed: yes|no, closing_quote, coupled_sites_checked: [...], sites_missed: [...], decisions_entry: "<heading>" | "none — <class>"}`. A blocker whose `coupled_sites_checked` is empty was not checked; re-run it.
+
 ### Persist on exit
 
-At the end of the Orchestrator Decision phase (after verdict rendering), update the state file with the new round's data:
-
-- `last_review_at` ← current UTC timestamp
-- `last_verdict` ← rendered verdict
-- `last_plan_word_count` ← current word count
-- `last_plan_sha256` ← sha256 of full plan file
-- `section_hashes` ← rebuilt from current plan
-- `round_number` ← incremented
-- `prior_blockers` ← rebuilt from the current verdict's blockers (open at this round's exit)
-- `recently_resolved_blockers` ← extended: prior round's blockers that no longer appear in the current verdict become entries, with `user_decision` populated per the capture priority below; existing entries with `carry_forward_until_round < new round_number` are dropped
-
-Write the file. If verdict is `CLOSED`, leave the state file in place — a future invocation against the same feature (e.g., after a brief amendment) will see `round_number` as the next integer and apply the gates correctly.
-
-### Capture priority for `user_decision`
-
-When recording a resolved blocker, populate `user_decision` from these sources in priority order. Stop at the first one that yields a non-empty rationale:
-
-1. **User text in the current invocation `$ARGUMENTS`** — e.g., re-invocation phrased "round 3, withdrew chunk 8 because cross-grep guard moved to chunk 6"
-2. **Plan diff to the prior section** — if the section's hash changed since `last_plan_sha256` and the diff is small (≤200 chars added text), the diff IS the rationale; record it verbatim
-3. **`features/<feature>/decisions.md` entry** added since `last_review_at` whose subject matches the blocker's `path_or_section` (use the entry's `Why:` paragraph)
-4. **Commit message body** since `last_review_at` (use `git log <last_review_sha>..HEAD --format=%B` if commits exist between rounds)
-5. **Commit message subject** as fallback
-6. **`"No rationale recorded"`** if none of the above yields a rationale
-
-Cap captured rationale at ~200 chars. Truncate with `…` if longer.
-
-### Edge case — manual reset
-
-If the user wants to discard prior-round memory (e.g., after a major plan rewrite), they delete `~/.claude/cache/review-state/<feature-slug>.json` manually. The skill does NOT auto-detect "the plan was rewritten" because that judgment can be wrong; explicit deletion is the safe lever.
+Per the shared file, plus `last_plan_word_count` ← current word count and `section_hashes` ← rebuilt from the current plan. On `CLOSED`, leave the file in place: a later invocation after a brief amendment needs the round count to apply these gates correctly.
 
 ---
 
@@ -305,8 +312,9 @@ Brief User-facing changes listed: <count> [verbatim list]
 Brief Non-goals listed: <count> [verbatim list]
 
 Goal → chunks mapping (per Brief Mapping):
-- "<verbatim Goal>" → chunks {`slug-a`, `slug-b`, ...}
+- "<verbatim Goal>" → chunks {`slug-a`, `slug-b`, ...}, verified by {`acceptance-slug` / "Manual review — <reason>"}
 - "<...>" → ❌ NO CHUNKS LISTED  [HARD: undelivered Goal]
+- "<...>" → ❌ NO `Verified by` PROOF  [HARD: GOAL_VERIFICATION_GAP]
 
 User-facing change → chunks + verifier:
 - "<verbatim change>" → delivered by {`slug-a`}, verified by {`slug-x` / "Manual review"}
@@ -317,13 +325,24 @@ Chunks appearing in Brief Mapping (Goals, User-facing, or Supporting infrastruct
 - `schema-migration`, `cascade-rewrite`, ... ✓
 - `legacy-shim-cleanup` ❌ NO MAPPING  [HARD: unjustified chunk]
 
-Brief Non-goals → enforcement check:
-- "<verbatim non-goal>" → enforced by: <plan section / chunk> / ❌ NOT ENFORCED  [SOFT: HIGH]
+Brief Non-goals → enforcement + classification check:
+- "<verbatim non-goal>" → kind: testable-absence, test owned by {`acceptance-slug`} ✓
+- "<verbatim non-goal>" → kind: scope-boundary, reason: "<...>" ✓
+- "<...>" → ❌ testable-absence but NO owning test  [HARD: GOAL_VERIFICATION_GAP]
+- "<...>" → ❌ marked scope-boundary but the exclusion is observably assertable  [HARD: GOAL_VERIFICATION_GAP]
+
+Acceptance chunk check:
+- Dedicated acceptance chunk `<slug>`: present ✓ / ❌ ABSENT  [HARD: GOAL_VERIFICATION_GAP]
+- Is DAG sink (no chunk depends on it) AND Code-deps cover every delivering chunk: ✓ / ❌ [HARD: GOAL_VERIFICATION_GAP]
 
 Drift detected:
 - Plan claims user-facing behavior X. Brief does not list X.  [SOFT: HIGH — scope creep or missing brief Goal]
 - Brief lists Goal Y. Plan does not deliver Y.                [HARD: undelivered Goal]
 ```
+
+**Tracked layout — trace against the union.** When the feature has sibling engineering plans, a brief Goal, user-facing change, or Non-goal this plan does not deliver may be delivered by a **sibling track**. Before filing any `undelivered Goal` / untraced-change finding, read the sibling plans' Brief Mapping and mark the Goal *covered* if a sibling delivers it — its acceptance-chunk and `Verified by` proofs are then satisfied by the delivering track's chunk. Only a Goal **no** sibling track delivers is `[HARD: undelivered Goal]`. This is the coverage-union rule of `~/.claude/skills/_review-common/principles.md` § Sibling-plan co-delivery; the orphan/integration half of that principle retires cross-track shipping findings entirely.
+
+**Goal-verification audit (mechanical + light judgment).** The blocks above ground three facts: (1) a dedicated **acceptance chunk** exists as a DAG sink whose Code-deps cover every delivering chunk; (2) every brief Goal carries a `Verified by` proof naming that chunk (or `Manual review — <reason>` — and a Goal whose outcome is observably automatable but left to manual check is a gap, not an exemption; the mechanical trace flags the blank/`Manual review` cells and the `product`/`testing` personas judge automatability); (3) every Non-goal is classified `testable-absence` (→ an assert-absence test owned by the acceptance chunk) or `scope-boundary` (→ `not test-assertable — <reason>`), and a `scope-boundary` mark on an observably-assertable exclusion is a gap. Each failure files `GOAL_VERIFICATION_GAP` — **Class A** (brief Goal/Non-goal honoring; exempt from decisions-log-first carry-forward per `_review-common/principles.md` § Cross-artifact authority order). This is distinct from `BRIEF_GOAL_UNDELIVERED` (no chunk delivers the Goal) and `SURFACE_PARITY_GAP` (delivered short of its domain): `GOAL_VERIFICATION_GAP` fires when the Goal may be delivered fine but nothing *proves* it, so a later refactor can break the contract with no failing test.
 
 ### Repo Reality (mechanical)
 
@@ -343,22 +362,34 @@ The template at `features/_template/engineering-plan.md` is the source of truth 
 **Required sections present, in order:**
 1. Brief mapping
 2. Architecture summary
-3. Invariants *(optional)*
-4. Other domain contracts *(optional)*
-5. Chunk index
-6. Manual gates *(optional)*
-7. Dependency graph
-8. Risks / unknowns
-9. Rollout plan *(conditionally required: prod state changes / migrations / flags)*
-10. Out of scope
+3. Invariants *(required; may carry the no-invariants disclaimer)*
+4. Threat model *(required; may carry the no-surface disclaimer)*
+5. Other domain contracts *(optional)*
+6. Chunk index
+7. Manual gates *(optional)*
+8. Dependency graph
+9. Risks / unknowns
+10. Rollout plan *(conditionally required: prod state changes / migrations / flags)*
+11. Out of scope
 
 **Required headers:**
 - Header with `**Brief:**` link (and `**Decisions:**` link when `decisions.md` exists)
-- Brief Mapping has `### Goals`, `### User-facing changes`, `### Non-goals enforcement` subsections
+- Brief Mapping has `### Goals`, `### User-facing changes`, `### Scope enforcement` subsections
 - User-facing changes table has a `Verified by` column
+- Goals table has a `Verified by` column; Scope enforcement table has a `Kind` column (`testable-absence` | `scope-boundary` | `deferred-tracked`). A missing column → `[HARD: GOAL_VERIFICATION_GAP]` (the acceptance-proof mapping cannot be graded without it).
+
+**Invariants and Threat model (both required sections):**
+- Each carries content OR its explicit disclaimer (`No cross-chunk invariants — <reason>.` / `No threat-model surface — <reason>.`). Present-but-empty is `[HARD]` — an empty section and a missing one read identically, and neither is a decision.
+- Every invariant carries `**Form:**` (`test` | `assert` | `gate` | `doc`) and `**Falsifier:**`. Missing either is `[HARD]`. `Form: doc` on an invariant in a high-risk class (auth, score math, data integrity) is `[SOFT MEDIUM]` — it is unenforced by construction.
+- **The threat-model trigger is yours to judge, and `/plan-lint` cannot do it.** The disclaimer is `[HARD]` when the feature touches authentication, session or token lifetime, follow/block/mutual-unfollow, writes to user-owned data, a public-vs-locked exposure boundary, external-data ingestion, or an LLM-mediated path. Read the Architecture summary and the chunk index for those surfaces rather than trusting the disclaimer's reasoning — an unjustified disclaimer is the failure mode the required section exists to catch, and it is the one check no regex reaches.
+- A populated Threat model whose detections cite invariants, alongside a `No cross-chunk invariants` disclaimer, is `[HARD]` — the two contradict.
+- **Legacy tolerance.** A plan with no Invariants section, no Threat model section, or invariants carrying neither field predates the convention. File ONE `[SOFT LOW]` per missing convention recommending migration on the next substantive edit; do not file per-entry findings and do not treat it as a structural defect.
 
 **Chunk index column rules:**
-- Columns are EXACTLY `Slug | Chunk | Code deps`. Any of `#`, `Status`, `PR`, `Mode`, `Owner`, `Last-updated` is `[HARD]`.
+- Columns are EXACTLY `Slug | Chunk | Intent | Code deps`. Any of `#`, `Status`, `PR`, `Mode`, `Owner`, `Last-updated` is `[HARD]`. A missing `Intent` column on a plan that predates the convention is `[SOFT LOW]` (migrate on next touch), not `[HARD]`.
+- `Intent` is one of `Foundation`, `Behavior`, `Hardening`, `Migration`. Any other value is `[HARD]`.
+- A `Foundation` chunk that no other chunk depends on is `[HARD]` — it changes no behavior and has no consumer, so it ships dead scaffolding. **Tracked layout:** "no consumer" means no consumer **in this plan** — a Foundation chunk consumed only by a sibling track is not orphaned (`~/.claude/skills/_review-common/principles.md` § Sibling-plan co-delivery).
+- A `Migration` chunk that does not depend on the chunk making the runtime forward-compatible is `[SOFT MEDIUM: expand-then-contract inverted]`.
 - Slugs are kebab-case, 2–4 words. Numbered identifiers (`phase-N-*`, `step-N-*`, `wave-N-*`, `chunk-NN`, `01a/01b`, `Phase 2.b`) are `[HARD]` per occurrence.
 - Chunk names are 6–10 words, plain English. No `(WIP)` / `(stretch)` / `(if time)`.
 - `Code deps` cell is comma-separated chunk slugs or `—`. Manual-gate dependencies in this cell → `[HARD]`.
@@ -383,6 +414,24 @@ The template at `features/_template/engineering-plan.md` is the source of truth 
 - Meta-commentary (`this section…`, `below we'll cover…`) → SOFT MEDIUM
 - Emojis, exclamation marks → SOFT LOW
 
+### Chunk-surface estimator (mechanical, mirrors `/engineering-plan-author`'s gate)
+
+The author skill runs a Chunk-surface estimator gate that catches chunks whose aggregate surface is feature-sized rather than chunk-sized — independently of self-disclosure patterns and not subject to Concern-lint carry-forward. The reviewer mirrors the gate to catch hand-edited plans that bypassed the author skill and to verify the author's gate fired correctly on the current shape.
+
+For each chunk-index row, compute (same algorithm as the author skill — see `engineering-plan-author/SKILL.md` § Chunk-surface estimator gate for definitions):
+
+- `concern_count` — top-level "+"-separated noun phrases in the row description (split on `+`, `;`, ` AND `, ` plus ` at the outermost paren level; nested parentheticals count as one outer concern).
+- `introduced_identifier_count` — distinct identifiers the row's prose names that the chunk *creates* (functions, types, constants, CLI subcommands, schema columns, file paths created).
+- `cross_chunk_contract_count` — distinct cross-chunk forward-binding contracts the row binds (heuristic: "every chunk that…", "downstream chunks…", "forward-binding", "cross-chunk", "future-chunk", explicit cross-chunk-contracts sub-sections).
+
+File `CHUNK_SURFACE_EXCESS` as a HARD blocker when ANY of: `concern_count >= 5`, `introduced_identifier_count >= 8`, `cross_chunk_contract_count >= 2`.
+
+**Author state cross-check.** Read `~/.claude/cache/author-state/<feature>__engineering-plan.json`. If `chunk_surface_estimator` is absent, OR if any row's `verdict` recorded there is `passed` but the reviewer's recomputation says `excess`, OR if the author state's recorded counts disagree with the reviewer's recomputation, file the resulting `CHUNK_SURFACE_EXCESS` blocker AND a separate `AUTHOR_GATE_DRIFT` finding noting the author state did not run or recorded different counts (helps the user notice when a hand-edit bypassed `/engineering-plan-author`).
+
+**Carry-forward exemption.** `CHUNK_SURFACE_EXCESS` is NOT subject to decisions-log-first carry-forward consultation. Surface excess is a structural property of the row, not an arbitration question; a `decisions.md` row binding *what* the chunk does cannot bind *how much*. Only a `decisions.md` row whose Resolution column explicitly acknowledges the aggregate surface as intentional (containing language like "surface acknowledged", "feature-sized chunk accepted", "atomic landing surface arbitrated") retracts the blocker. Bare keyword matches against component concerns of the row do NOT retract.
+
+The blocker's actionable resolutions match the author skill's: split the row into N sibling chunks with explicit dependency edges; extract a foundational sub-chunk that other siblings depend on; or cite a `decisions.md` row that arbitrates aggregate surface (per the language above).
+
 ### Decision-Closure Audit (mechanical, judgment-classified)
 
 Engineering plans thrash when cross-chunk-wiring decisions get deferred to per-chunk plans under language like "mechanism is pinned in the orchestrator's per-chunk plan", "exact predicate is pinned at chunk-plan time", "TBD per per-chunk plan". A cross-chunk-wiring decision deferred this way is silent breakage: multiple chunk plans then need it but none can make it unilaterally.
@@ -405,6 +454,7 @@ Record `{section_heading, line_range, verbatim_quote, surrounding_paragraph}` pe
 
 - **`cross-chunk-wiring`** — names or implicates a schema column, resolver predicate, transaction position, event name/payload shape, file path of a shared module read/written by 2+ chunks, cross-chunk interface or contract, manual-gate verification mechanism, rollback path, or feature-flag wiring. Heuristic: if the answer has to be the same across two or more chunks, it's cross-chunk-wiring.
 - **`chunk-internal`** — names a test name, single-file function name, internal phase split within one chunk, files-to-create scoped to one chunk, exact log string, SQL query, regex pattern, internal organization. Legitimately deferred per critical-pair policy.
+- **`cross-track-codelivery`** — names a **sibling track's** consumption of an **already-defined** export of this track, or wiring the sibling performs as part of its own implementation (repointing a seam onto this core, importing a shared contract whose shape is defined here). This is not a deferred decision; it is the feature's structure, done and verified in the sibling's own cycle (`~/.claude/skills/_review-common/principles.md` § Sibling-plan co-delivery). No finding. **But** a deferral that leaves the **shape** of a shared cross-track contract undecided (its type, column, event payload, or predicate defined in neither this plan nor the owning track) is `cross-chunk-wiring`, not co-delivery — co-delivery covers *who consumes* and *when*, never *what the shared shape is*.
 - **`brief-layer`** — names a residual gap, accepted user-facing tradeoff, scoped non-goal, scope expansion, or product-shape decision. Belongs in `brief.md`.
 - **`unclear`** — topic cannot be classified mechanically with confidence.
 
@@ -412,7 +462,7 @@ Record `{section_heading, line_range, verbatim_quote, surrounding_paragraph}` pe
 
 Before emitting findings, `Read` `features/<feature>/decisions.md` if it exists. For every deferral classified `cross-chunk-wiring` or `brief-layer` in the previous step, search `decisions.md` for prior entries naming the same surface (heuristics: matching identifier name, matching section heading, matching verbatim phrase fragment ≥4 words).
 
-If a prior `decisions.md` entry is found AND it bound the surface to a different classification (e.g., previously declared `chunk-internal` and now being flagged `cross-chunk-wiring`, or vice-versa), the current classification is a **reclassification**.
+If a prior `decisions.md` entry is found AND it bound the surface to a different classification (e.g., previously declared `chunk-internal` and now being flagged `cross-chunk-wiring`, or vice-versa), the current classification is a **reclassification** — only an Active bound entry (one in the `## Active (bound)` section with `Status: bound`) counts as the binding prior classification; a `superseded`/`obsolete` entry in the `## Archived (superseded / obsolete)` tail is not a live binding (per `~/.claude/skills/_review-common/principles.md` § What counts as a bound entry).
 
 Reclassifications must include a one-sentence justification grounded in repo state that changed since the prior entry (new file added, new dependency, schema migration, brief amendment) — NOT just "on re-reading I see this is cross-chunk." Without a justification:
 
@@ -430,6 +480,7 @@ If `decisions.md` does not exist or contains no matching entry, no consistency c
 - `brief-layer` (no prior conflicting classification) → `[HARD: brief-layer decision in plan body]`. Include verbatim quote.
 - `brief-layer` (reclassification without justification) → `[OPEN_QUESTION: classification differs from prior round]`.
 - `chunk-internal` → no finding (legitimate deferral).
+- `cross-track-codelivery` → no finding (the feature's structure, not a deferred decision — `principles.md` § Sibling-plan co-delivery).
 - `unclear` → pass to Persona Prosecution as `decision_classification_unclear`. Personas applying the classification must ALSO consult `decisions.md` and follow the same consistency rule.
 
 Output:
@@ -468,6 +519,7 @@ Findings that survive Mechanical Fixes (Brief Trace HARDs, Repo Reality HARDs, s
 
 Bulleted facts list (not verbose YAML):
 - brief_trace: goals, user_facing_changes, non_goals, drift, hard_findings (undelivered Goals, untraced changes, unjustified chunks)
+- goal_verification: acceptance_chunk_present, acceptance_chunk_is_sink, goals_with_proof / goals_total, non_goals_classified / non_goals_total, hard_findings (GOAL_VERIFICATION_GAP: missing acceptance chunk / unproven Goal / unproven-or-misclassified Non-goal)
 - repo_reality: architecture_claims (claim + status + evidence), ci_claims, code_deps, false_parallelism, hard_findings
 - structural_lint: sections_present, column_check, forbidden_pattern_hits, hard_findings, soft_findings
 - decision_closure: deferrals_total, cross_chunk_wiring, brief_layer, chunk_internal, unclear, hard_findings
@@ -476,9 +528,62 @@ Bulleted facts list (not verbose YAML):
 
 ---
 
+## Brief-conformance Audit (Stage 1.5 — MANDATORY, HARD findings exempt from carry-forward)
+
+Per `_review-common/principles.md` § Cross-artifact authority order, brief Goals and Non-goals are Class A — `brief.md > decisions.md > engineering plan`. This stage prosecutes Class A contradictions BEFORE persona prosecution, so its findings enter Stage 2 as `pre_resolved_hard_findings` exempt from decisions-log-first retraction.
+
+The audit is a parallel batch of subagents: one Brief-conformance Prosecutor (trespass + delivery + verifiability, over the whole brief) plus one Scope-fidelity Adversary per at-risk Goal (scope/authority/timing parity, one Goal each, in isolation). Pattern matching and keyword extraction were tried in an earlier draft and rejected: trespasses surface under arbitrary vocabulary (a Non-goal forbidding "resumability infrastructure" trespassed by a chunk called `checkpointConvention` shares zero keywords), and keyword scans produce false positives on plan sections that mention a Non-goal noun in order to *honor* the Non-goal. Behavioral reasoning is the only honest gate — and for parity specifically, reasoning done in ISOLATION per Goal, because the same reasoning batched across many items goes charitable and misses narrowings (validated this way).
+
+### Procedure
+
+1. **Spawn both roles in one parallel batch** (Agent tool, `general-purpose`, default subagent type), using the two prompts in `~/.claude/skills/_review-common/brief-conformance-prosecutor.md`. **Every agent in this batch takes an explicit off-model `model` override** per that file's § Model pin (default `sonnet`; `opus` if the session is already Sonnet) — never inherit the session model, since a judge sharing the authoring model's priors is the bias this gate exists to remove. Record the pinned model as `brief_conformance_report.conformance_gate_model`.
+
+   **(a) One Brief-conformance Prosecutor** (trespass + delivery + verifiability), substituting:
+   - `{brief_path}` = `features/<feature>/brief.md`
+   - `{plan_path}` = `<plan-root>/engineering-plan.md`
+   - `{sibling_plan_paths}` = every OTHER track's `engineering-plan.md` when the feature is tracked, else "none". Required — see `_review-common/brief-conformance-prosecutor.md` § Substitutions common to all layers. Omitting it on a tracked feature makes each declared hand-off read as a narrowing and floods the round with false `SURFACE_PARITY_GAP`s.
+   - `{decisions_path}` = `features/<feature>/decisions.md` (or "none" if absent)
+   - `{plan_layer}` = `engineering-plan`
+   - `{additional_examples}` = the calibration examples accumulated in the state file's `brief_conformance_calibration_examples` (empty on first invocation; grows as the user resolves false positives by binding explicit `## Decisions closure` arbitration entries)
+
+   **(b) One Scope-fidelity Adversary per at-risk Goal**, each with the second prompt and exactly ONE Goal. First enumerate the brief's Goals and select the **at-risk subset** — a Goal that carries a domain quantifier ("every", "across", "all", "any", "going forward", "at every surface") OR names an authoritative signal/basis the outcome must be judged on. Single-surface concrete Goals are not at-risk and get no adversary. For each selected Goal, substitute `{goal_under_review}` = that Goal verbatim; the other four substitutions are identical to (a). **NEVER batch multiple Goals into one adversary** — isolation is the load-bearing, validated separation (a shortfall an isolated judgment catches is missed when many items share one attention window). Record which Goals were selected and which were skipped-as-not-at-risk in the `brief_conformance_report` (below) so coverage is auditable and not silently truncated. When unsure whether a Goal is at-risk, spawn the adversary.
+
+2. **Receive every role's JSON output and merge the `findings` arrays into one list** (schemas are identical). Parse `brief_conformance_check`, `rationale`, and `findings` from each. If any single role's output is malformed (missing required fields, severity outside the allowed set, finding without both verbatim quotes), surface as an internal error and re-spawn ONLY that role once — do NOT silently file malformed findings and do NOT re-spawn the whole batch.
+
+3. **Pass merged findings into Stage 2.** Each finding becomes a `pre_resolved_hard_findings` entry visible to every persona's prompt. Personas may file ADDITIONAL findings but cannot retract Stage 1.5 ones — the orchestrator drops persona findings whose substance contradicts a Stage 1.5 finding's evidence (with note `retracted: contradicts pre-resolved Stage 1.5 finding {id}`).
+
+4. **Build the `brief_conformance_report` for verdict rendering:**
+   ```
+   brief_conformance_report:
+     prosecutor_verdict: "passed" | "findings_filed"      # aggregated across all roles
+     findings_total: <int>
+     findings_high_hard: <int>
+     findings_medium_hard: <int>
+     bound_decisions_trespassing: <int>     # findings whose evidence_source cites decisions.md
+     plan_sections_trespassing: <int>       # findings whose evidence_source cites the plan body
+     goals_undelivered: <int>
+     surface_parity_gaps: <int>             # SURFACE_PARITY_GAP findings — Goal delivered over a subset of its domain, on a proxy basis, or via a premature/irreversible action
+     scope_adversaries_spawned: <int>       # one per at-risk Goal
+     goals_at_risk: [<Goal verbatim>, ...]  # Goals that got an adversary
+     goals_skipped_not_at_risk: [<Goal verbatim>, ...]   # concrete single-surface Goals; no adversary
+     rationale: "<prosecutor's rationale paragraph + one line per adversary that flagged>"
+   ```
+
+   Pass into Stage 3 for verdict rendering; the verdict's Blockers section lists each finding with the role's reasoning, evidence, and resolution_paths verbatim so the user can act without re-reading the subagent output.
+
+### Calibration loop
+
+The prosecutor is judgment-class; calibration will drift. Two guard mechanisms:
+
+- **False-positive escape.** When the user resolves a `BRIEF_NONGOAL_TRESPASS` blocker by adding an explicit `## Decisions closure` entry that arbitrates the contradiction (with `bound` status, citing why the prosecutor's reading was wrong), record the resolution in the state file's `recently_resolved_blockers` AND append the (brief_quote, contradicting_evidence, user's arbitration sentence) triple to `brief_conformance_calibration_examples`. Subsequent invocations pass these resolutions as `{additional_examples}` negative cases so the prosecutor learns the user's calibration over time.
+
+- **False-negative escape.** If a reviewer-stage persona files a Class A trespass that Stage 1.5 missed, the orchestrator promotes it to a pre-resolved Stage 1.5 equivalent (severity HIGH HARD, class `BRIEF_NONGOAL_TRESPASS`) rather than treating it as a normal persona finding subject to carry-forward. The verdict notes `stage_1_5_miss_recovered_by_persona: <persona_name>` so calibration drift is visible.
+
+---
+
 ## Persona Prosecution (parallel agents, fix-list output)
 
-Resolve personas (auto or explicit). Launch one Agent per persona **in parallel in a single message**.
+Resolve personas (auto or explicit). Launch one Agent per persona **in parallel in a single message**, each with `model: "sonnet"` per `_review-common/agent-prompt.md` § Model pin — never inherit the session model; record `persona_model` in the review state.
 
 ### Spawn agents
 
@@ -489,7 +594,7 @@ Use the template in `~/.claude/skills/_review-common/agent-prompt.md`. Substitut
 - `{pre_resolved_hard_findings}` — anything Ground Truth already raised
 - `{active_critical_pair_subset}` — `P-CLASS-SCOPE, P-FULL-FILE, P-EP-IMPL-DETAIL, P-EP-BRIEF-GOALS, P-EP-VERIFIED-BY, P-EP-RISK-DEPTH, P-EP-DECISION-LOC`
 - `{target_locator}` — engineering plan path
-- `{how_to_get_it}` — `Read features/<feature>/engineering-plan.md`, `Read features/<feature>/brief.md`, `Read features/<feature>/decisions.md` (if exists)
+- `{how_to_get_it}` — `Read <plan-root>/engineering-plan.md`, `Read features/<feature>/brief.md`, `Read features/<feature>/decisions.md` (if exists). Under the tracked layout, also name the sibling tracks' plans as context-only reads: a chunk this plan does not own may still be the counterpart of a seam it registers.
 - `{pr_description_or_brief_mapping}` — pointer to the brief; agents Read on demand
 - `{skill_specific_extensions}` — see "Premise Interrogation pass" + "decision_classification_unclear handling" + "round-memory injection" below
 - `{skill_specific_preamble}` — `premise_interrogation: passed | reset_findings_filed`; `round_number: <N>`
@@ -560,24 +665,30 @@ The plan and brief are passed by *path*; agents Read them. The persona file is r
 >
 > Severity additions for engineering plans:
 > - **RESET**: a load-bearing premise about current system state is false. In the `resets:` block, NOT in `findings:`.
-> - CRITICAL: plan will fail mid-execution, leave a half-shipped feature, or corrupt prod state.
+> - CRITICAL: plan will fail mid-execution, leave a half-shipped feature (of **this plan's own** chunks — the window between sibling tracks landing is not half-shipped; nothing deploys on a merge, per `principles.md` § Sibling-plan co-delivery), or corrupt prod state.
 > - HIGH: significant correctness or rollout-safety risk.
 
 ---
 
 ## Imagined-Implementer Dry Run
 
-Convergence-forces the plan into a state where it is *implementable as written*. Runs after Persona Prosecution by spawning one foreground Agent. Output gates the `CLOSED` verdict.
+Convergence-forces the plan into a state where it is *implementable as written*. Runs after Persona Prosecution by spawning one foreground Agent with `model: "sonnet"` (per `_review-common/principles.md` § Station model policy — it simulates the *execution-tier* implementer, so running it on the execution-tier model makes the simulation more faithful, not less). Output gates the `CLOSED` verdict.
 
-The premise: the engineering plan is a contract for an implementer who will read only this plan plus the brief and start writing the next chunk plan from a cold start. If after reading those two documents the implementer has to make cross-chunk-wiring decisions herself, the engineering plan is incomplete.
+The premise: the engineering plan is a contract for an implementer who will read only this plan plus the brief and start writing a chunk plan from a cold start. If after reading those two documents the implementer has to make cross-chunk-wiring decisions herself, the engineering plan is incomplete. The chunk simulated is the **most contract-dense** unshipped one, not the next dep-free one — see the selection rule in the agent prompt for why.
 
 ### Agent prompt
 
-> You are simulating an implementer about to write the per-chunk plan for the next dep-free chunk in the chunk index. You have read **only** this engineering plan and its brief. You have NOT read prior reviews, decisions logs, or this conversation's history. You will not write the per-chunk plan now — only enumerate what the engineering plan provides and what it leaves you to decide yourself.
+> You are simulating an implementer about to write the per-chunk plan for the chunk named by the selection rule below (the unshipped chunk binding the most cross-chunk contracts — **not** the next dep-free one). You have read **only** this engineering plan and its brief. You have NOT read prior reviews, decisions logs, or this conversation's history. You will not write the per-chunk plan now — only enumerate what the engineering plan provides and what it leaves you to decide yourself.
 >
-> Read `features/<feature>/brief.md` and `features/<feature>/engineering-plan.md`.
+> Read `features/<feature>/brief.md` and `<plan-root>/engineering-plan.md`.
 >
-> Pick the next dep-free chunk in the chunk index that has not yet shipped (deps `—` or all deps shipped on `main`). Imagine starting its per-chunk plan now, from a cold read.
+> **Pick the unshipped chunk that binds the MOST cross-chunk contracts** — not the first dep-free one. Count, per unshipped chunk-index row: shared identifiers it reads or writes, gate conditions it must satisfy or produce, markers / columns / events another chunk depends on, and forward-binding obligations it carries. Take the maximum; break ties toward the chunk that becomes dep-ready soonest. State the count in your rationale.
+>
+> **Rotation across rounds — do not re-simulate a chunk that already cleared.** You are handed `{chunks_already_simulated}`: chunks simulated in earlier rounds that returned `implementable` and whose chunk-index row has not changed since. Exclude those and take the densest of what remains. Only when every chunk above the median contract count has been simulated-and-cleared do you fall back to re-simulating the densest. A single fixed selection rule would otherwise probe one chunk forever and leave every other chunk permanently unexamined — which is the old rule's failure mode with a different chunk on the pedestal, and it bites hardest on exactly the large plans where more than one chunk is independently risky.
+>
+> This rule is deliberate and **replaces an earlier "next dep-free chunk" rule that systematically selected the safest chunk in the plan.** Dep-free chunks are foundations — small, isolated, carrying few cross-chunk contracts — so simulating one reliably returns `implementable` while the cross-chunk decisions that actually break parallel implementation sit in later, contract-dense chunks the simulation never opened. In a real round this rule picked a single-value enum migration and cleared the plan while two CRITICAL defects sat in gate machinery it never read. Your purpose is gap detection, not chronological realism: a cold-read implementer can simulate any chunk, so simulate the one where an unbound contract would do the most damage.
+>
+> Imagine starting that chunk's per-chunk plan now, from a cold read.
 >
 > Produce three lists:
 >
@@ -596,6 +707,8 @@ The premise: the engineering plan is a contract for an implementer who will read
 >
 > ```
 > next_chunk_chosen: {slug}
+> cross_chunk_contract_count: {integer — the count that selected it}
+> contract_counts_considered: {slug: count, ...}   # every unshipped chunk, so the selection is auditable
 > next_chunk_rationale: {one sentence}
 >
 > needed_identifiers:
@@ -634,9 +747,56 @@ The premise: the engineering plan is a contract for an implementer who will read
 
 ---
 
+## Structural Sweep (MANDATORY, UNSEEDED — runs even on a zero-finding round)
+
+Per `~/.claude/skills/_review-common/structural-sweep.md` — read it for the mechanism, agent template, merge, and state/verdict schema. This section fills the per-layer slots.
+
+**Why this stage exists at this layer.** Every other discovery path here is either mechanical claim-verification (Ground Truth) or judgment recall (personas). The Class Sweep multiplies the second — it is a finding-*expansion* pass, seeded from surviving findings, and explicitly barred from discovering a new class. So a defect class **no persona filed** is invisible to the whole pipeline, and no compliance check fires, because there was no seed to be incomplete about. This stage is the unseeded counterpart. It runs regardless of the round's finding count; a clean round is exactly when it earns its cost.
+
+**Universes to run at this layer:**
+
+- **Universe L — gate liveness.** Members: every `## Manual gates` row × every condition it asserts, plus every scripted gate (post-`--apply` hard gates, post-run audit checks, coverage gates), every CI gate the plan names, and every condition in a capture-time re-verification set. Under the tracked layout, run it over **both** plans' gates in one pass — a cross-plan gate chain is where an absorbing state hides best. The fixed question: *is there a reachable state in which this condition can never be satisfied, no matter how many re-runs, with no specified remedy?* Closure requires a named terminating path — a re-run that genuinely differs because the cause was transient, an operator action, an exempting marker, or a **disclosed** accepted residual. "The operator would work something out" is a GAP. Weight CRITICAL when the gate blocks an irreversible or one-shot step.
+- **Universe P — protection parity.** Members: every protection the plan *itself* treats as required for a dangerous action × every path reaching that effect (destructive row writes, column nulls, cascade-child deletes, irreversible operator flags). Derive the protection list **inductively from the plan**, never from a generic checklist — the plan's own invariants are the obligation. Mark HAS (quote it) / N/A (structurally inapplicable, say why) / GAP. "The operator would not do that" is a GAP, not N/A. Protection parity is judged **within a plan's own execution** — the gap between sibling tracks landing is not an unprotected state, since nothing deploys on a merge (`~/.claude/skills/_review-common/principles.md` § Sibling-plan co-delivery).
+
+**`{known_good_reference}`** — when one path or gate already solves the question correctly, name it in the prompt. A sweep with a reference produces fixes that mirror an in-plan precedent instead of inventing a mechanism, which is what keeps a GAP's remedy cheap to bind.
+
+**Skip rule.** Universe L is skipped only when the plan gates nothing irreversible; Universe P only when the plan defines a single path to each dangerous effect. Record every skip with its reason in `structural_sweep.universes_skipped` — never skip silently.
+
+**Concurrency.** Both universes are unseeded, so they may be spawned in the same message as Persona Prosecution rather than after it; they need only Ground Truth's verified facts, not findings. The pipeline shows them sequentially for clarity.
+
+**Merge.** Every GAP becomes a same-round finding at the sweep-judged severity, routed through the same critical-pair retraction and the same class-aware authority order as a persona finding. A GAP requiring an upper-authority amendment is a director blocker, not an auto-fix — a structural gap is frequently a contract or scope decision. `UNDETERMINED` cells never vanish: each is either resolved by a cheap orchestrator check or recorded as a `POLISH_PLATEAU` note naming what would settle it.
+
+---
+
+## Repo Reality Sweep (MANDATORY — runs even on a zero-finding round)
+
+Per `~/.claude/skills/_review-common/repo-reality-sweep.md` — read it for the mechanism, agent template, merge, and state/verdict schema. This section fills the per-layer slots.
+
+**Why this stage exists, and why it is not a Structural Sweep universe.** Every stage above enumerates its universe from **the artifact** — gate rows, chunk rows, Goals, declared contracts, section headings. Ground Truth reads code, but only to verify claims the plan already made. The defects that survive to implementation are the claims the plan **omits**, and silence is not falsifiable, so nothing fires. This stage enumerates from the **repository** instead. It is a sibling rather than a fourth universe because the Structural Sweep's carry-forward hashes artifact sections, which is the wrong key entirely for a universe whose inputs are source files — a plan verified against a since-changed incumbent is exactly this stage's target.
+
+**Universes to run at this layer** — one agent per selected chunk, carrying all three questions (they are answered by reading the same files; batching the reading does not loosen the questions):
+
+- **Universe R — incumbent divergence.** For each chunk, grep for the shipped code doing its job today, by the *behavior* described rather than by the plan's file citations, which are what may be stale. Read its **secondary** writes — cache timestamps, audit rows, provenance columns, cleanups — since the plan describes only the primary job and a dropped side effect is invisible on the page. Question: where the design differs, is the difference deliberate and stated?
+- **Universe C — caller closure.** Every existing caller of every symbol, file, table, column or route the chunk changes, tests and scripts included. Question: does the plan account for it? A symbol already enumerated against one invariant but not the plan's others is the common shape and reads as coverage.
+- **Universe D — dependency guarantee.** Every primitive the chunk **newly makes load-bearing**. Open it, establish what it actually guarantees, and judge the plan's use **at the plan's stated scale**. Run hardest wherever a chunk widens a population, drops a filter, or raises a fallback to primary. Neither R nor C can reach this axis: the plan adopts the dependency rather than diverging from it, and the dependency is a callee rather than a caller.
+
+**Under the tracked layout, sweep across both plans' chunk sets** — sibling plans share a codebase and most of the same incumbents, so covering both costs barely more than one, and a cross-plan chunk pair writing the same column is exactly where a divergence hides. But a symbol or export whose only consumer is a **sibling track's** chunk is accounted-for by that track, not an orphan — file no Universe-C/R gap for "nothing calls this" across the track boundary (`~/.claude/skills/_review-common/principles.md` § Sibling-plan co-delivery). A genuine cross-track **contract drift** (the two tracks disagree on a shared type/column shape) remains a real finding.
+
+**Chunk selection and the cap.** Sweep every chunk on round 1; afterwards, chunks whose chunk-index row hash changed plus chunks whose recorded incumbents changed at HEAD. Cap 6 agents per round, taken in dependency order (earliest wave first — a wrong premise in an early chunk propagates through everything downstream). Record deferrals in `repo_reality_sweep.chunks_deferred` with the round they are owed; a silent cap reads as coverage.
+
+**Skip rule.** This stage is skipped only when the plan names no code at all, which at this layer means it has no chunks. Record the skip and its reason.
+
+**Concurrency.** Unseeded, so it may be spawned in the same message as Persona Prosecution and the Structural Sweep; it needs the repo and the chunk index, not findings.
+
+**Merge.** Every GAP becomes a same-round `REPO_PREMISE_GAP` finding at the swept severity, through the same retraction and authority order as any other. Universe-D gaps are usually director decisions — strengthen the use, narrow the population, or disclose the shortfall with the population sized — not auto-fixes.
+
+**Re-run the three questions on any fix this round applies.** A remedy is new design against the same codebase, and the specific failure is authoring a check the repo already implements next to what you just read. Before emitting a fix that adds a check, filter, or fallback: grep for an existing implementation and prefer importing it to redefining it. This is not hypothetical — in this stage's validation run the first proposed remedy for a Universe-D gap wrote off 47% of the affected population by stopping at two corroborating signals, while a third sat in an adjacent shipped helper one grep away.
+
+---
+
 ## Orchestrator Decision
 
-Runs in the main thread. Sub-passes in order: RESET Corroboration Check, Apply Mechanical-Fix Carry-Over, Filter Against Critical-Pair Policies, Fold In Implementability Findings, Detect Cross-Persona Disagreement, Consolidate Non-Conflicting Fixes, Classify Remaining Findings, Render Verdict.
+Runs in the main thread. Sub-passes in order: RESET Corroboration Check, Apply Mechanical-Fix Carry-Over, Filter Against Round-Memory Tags, Filter Against Critical-Pair Policies, Fold In Implementability Findings, Class Sweep, Detect Cross-Persona Disagreement, Consolidate Non-Conflicting Fixes, Post-fix premise verification, Same-round focused re-prosecution, Classify Remaining Findings, Render Verdict. The Class Sweep runs *after* the RESET short-circuit gate (a short-circuited round pays for no sweep) and after the finding-thinning filters, but *before* consolidation — so swept siblings are fixed alongside their seeds.
 
 ### RESET Corroboration Check
 
@@ -699,9 +859,21 @@ From `imagined_implementer_report`:
 
 Deduplicate against Decision-Closure Audit findings by topic (same cross-chunk surface, same section). Where a finding appears in both, attribute to Decision-Closure Audit (earliest source) and merge implementability evidence.
 
+### Class Sweep
+
+Runs after Fold In Implementability Findings (all findings collected + thinned by the round-memory and critical-pair filters), before Detect Cross-Persona Disagreement and Consolidate — a swept sibling must be able to become a `STABLE_DISAGREEMENT` like any seed, which it cannot if the sweep runs after disagreement detection. Skipped entirely if a RESET short-circuit fired above (the round already stopped). Per `~/.claude/skills/_review-common/class-sweep.md` — read it for the mechanism, sweep-agent template, merge, and state/verdict schema. Engineering-plan personas file one instance of a recurring class per round (one chunk-index row with an "and", one Goal missing a Brief-mapping, one closure row left `unclear`, one Non-goal contradicted); this fan-out closes the whole class in-round.
+
+**Procedure (per the shared file), with these engineering-plan slots:**
+
+- **Seed grouping.** Group surviving findings (persona + implementability) by `class`. Every distinct `recurring_category` (and any `propagated_identity` with a >1 peer-set) gets one sweep agent, `model: "sonnet"`; genuine singletons (`class_notion` absent / one-location peer-set) are recorded `singleton: true` with no agent.
+- **`{peer_set_definition}`** — the engineering-plan repeated units: every chunk-index row, every Brief-mapping entry, every `## Goals` / `## Non-goals` / `## User-facing changes` entry, every Decisions-closure row, every Risks entry, every section body. For `propagated_identity` classes (a cross-chunk identifier / column / flag), the token's callsites across the plan and the repo. Name the specific unit the seed's `peer_set` points at.
+- **`{artifact_access}`** — `Read <plan-root>/engineering-plan.md`, `features/<feature>/brief.md`, `features/<feature>/decisions.md`; under the tracked layout, the sibling tracks' plans (a class can recur across tracks). Grep the repo only for `propagated_identity` token sweeps.
+- **`{layer_notes}`** — respect `P-EP-IMPL-DETAIL` (a chunk-internal-detail sibling is out of scope at this layer) and `P-EP-BRIEF-GOALS` (an infrastructure chunk without a dedicated Goal is not a `BRIEF_GOAL_UNDELIVERED` sibling). Brief-conformance / `SURFACE_PARITY_GAP` siblings are Class A — they inherit the Class A carry-forward exemption and route to the user, not an auto-fix.
+- **Merge.** Dedup siblings against the finding pool by `(class, path_or_section)`; route new siblings through the Filter-Against-Critical-Pair-Policies retraction (same filter the seeds got), then carry the merged set into Detect Cross-Persona Disagreement. Record the `class_sweep` block in the per-round metrics.
+
 ### Detect Cross-Persona Disagreement
 
-For each plan span (section / chunk / line range), collect surviving findings. Two personas propose contradictory fixes for the same span → label `STABLE_DISAGREEMENT`.
+For each plan span (section / chunk / line range), collect surviving findings — seeds and swept siblings alike. Two personas propose contradictory fixes for the same span → label `STABLE_DISAGREEMENT`.
 
 ### Consolidate Non-Conflicting Fixes
 
@@ -716,85 +888,45 @@ Deduplicate findings across personas (merge, attribute to all). Group by target 
 
 ### Post-fix premise verification
 
-Runs after fixes are applied to disk, before classifying remaining findings. Executes in the **main thread (LLM judgment), NOT as a sub-agent spawn** — the orchestrator owns the edits and must own the verification.
+Per `~/.claude/skills/_review-common/orchestrator.md` § Post-fix premise verification, across the engineering plan, the brief, and `decisions.md`. Use the `section_diff_report` (sections marked `modified` or `added`) as the starting set, then narrow to lines this round's fixes actually wrote.
 
-**Why this exists.** The orchestrator's fixes can rewrite prose that asserts claims about behavior — section bodies, decision-closure remediations, brief amendments, decisions.md entries. A fix that mechanically rewords "predicate at file:line is X" can flip the assertion to something verifiably wrong. The persona prosecution pass already runs premise interrogation against persona claims; this sub-pass extends the same rigor to claims the orchestrator just introduced.
+This layer's claims are behavioral and structural: "the resolver returns X under condition Y", "chunk N writes only to files matching `<glob>`", "this column is NOT NULL", "matches the existing pattern in `<file>`". Distinct from Ground Truth's path-existence checks — this verifies that *behavior at those paths matches the claim*. Render each falsified claim as:
 
-**Procedure:**
-
-1. **Identify added or rewritten prose.** Scan the post-fix engineering plan, brief, and `decisions.md` for prose lines that were added or modified by this round's fixes. Use the section_diff_report (sections marked `modified` or `added`) as the starting set; within those, focus on lines added by orchestrator fixes (not unchanged context lines).
-
-2. **Identify verifiable claims.** Use LLM judgment to flag prose lines that assert a verifiable claim. Examples of verifiable claims:
-   - **Behavior**: "the resolver returns X under condition Y"
-   - **Scope**: "chunk N writes only to files matching `<glob>`"
-   - **Constraint**: "this column is NOT NULL"
-   - **Cross-reference**: "matches the existing pattern in `<file>`"
-
-   Skip:
-   - Section headers and structural prose
-   - Stylistic edits (tense changes, punctuation)
-   - Open-ended commentary ("future work may consider…")
-   - Aspirational language ("aim to", "ideally")
-
-3. **Verify each claim.** For each flagged claim, run the cheapest verification that falsifies it: `Read` the cited file at the cited line, `rg` for the cited identifier, `git log -p` for recent state. Distinct from Ground Truth's path-existence checks — this verifies *behavior at those paths matches the claim*.
-
-4. **File falsified claims.** Each claim that does not survive verification becomes a `FIX_INTRODUCED_PREMISE_INVERSION` blocker rendered in the verdict as:
-
-   ```
-   [FIX_INTRODUCED_PREMISE_INVERSION] {plan_section}: orchestrator-applied fix asserts "{verbatim claim}". Verification: {what was run}. Actual: "{verbatim contradicting evidence}". Working tree left dirty.
-   ```
-
-5. **Leave working tree dirty.** Do NOT auto-revert the bad fix. The user inspects, decides whether to amend the prose to match reality OR amend the underlying code/structure to match the prose, then re-invokes.
-
-Verification stats are recorded for the verdict template: `verification_attempts={n}; verified={n}; falsified={n}; new_blockers_filed={n}`.
+```
+[FIX_INTRODUCED_PREMISE_INVERSION] {plan_section}: orchestrator-applied fix asserts "{verbatim claim}". Verification: {what was run}. Actual: "{verbatim contradicting evidence}". Working tree left dirty.
+```
 
 ### Same-round focused re-prosecution on rewritten prose
 
-Engineering-plan reviews thrash hardest when round-N orchestrator fixes become round-N+1 prosecution targets. The Post-fix premise verification step above catches *false claims* introduced by orchestrator edits, but it does not catch *new persona-class defects* the rewritten prose introduces (e.g., a Decisions-closure remediation that an architecture persona would flag as cross-chunk-wiring, or a Brief Mapping addendum that a product persona would flag as scope creep). Without this pass those defects bake in and surface as fresh blockers next round.
+Per `~/.claude/skills/_review-common/orchestrator.md` § Same-round focused re-prosecution — one pass, bounded. Engineering-plan reviews thrash hardest here: premise verification catches *false claims* in fix prose, but not the *new persona-class defects* that prose introduces — a decisions-closure remediation an architecture persona would flag as cross-chunk wiring, a Brief Mapping addendum a product persona would flag as scope creep.
 
-This sub-pass closes the loop in-invocation. Bounded: exactly one re-pass on the orchestrator's own diff hunks, never recursive.
+Layer specifics:
 
-#### Skip conditions
-
-Skip this sub-pass when ALL three are true:
-1. Stage 3d applied zero fixes to the engineering plan (orchestrator-applied fix count == 0).
-2. Cross-file edits applied zero fixes to `decisions.md` / brief.md.
-3. Post-fix premise verification falsified-claim count == 0.
-
-If any of the three is non-zero, the sub-pass is mandatory.
-
-#### Procedure
-
-1. **Identify the orchestrator's diff hunks.** Run `git diff --unified=3 <pre-orchestrator-tree-ish>..HEAD -- features/<feature>/` and capture the per-file added-line spans across the engineering plan, brief, and decisions log. These are the spans Stage 3 wrote.
-
-2. **Spawn focused re-pass agents.** Spawn one focused agent per (artifact, persona) pair from the original Stage 2 panel, scoped to the diff hunks only. Use the same agent template (`~/.claude/skills/_review-common/agent-prompt.md`). All substitutions carry over verbatim from Persona Prosecution; the only changes are:
-   - `{audit_report_bullets}` is augmented with a "Diff hunks under review" block listing each (path, line range, verbatim added text).
-   - `{skill_specific_extensions}` gets a HIGH/MEDIUM filter prepended: "Filter findings to severity HIGH or MEDIUM only — LOW residuals are out of scope. Do not file premise-inversion RESETs (those are an entry-point-only mechanism). Premise inversions on rewritten prose are caught by Post-fix premise verification, not this pass."
-   - `{skill_specific_preamble}` is `re_pass: focused_diff_hunks; round_number: <N>; original_pass_completed: yes`.
-
-   **Omitting any other substitution under-constrains the persona** — the agent loses its persona file pointer, the audit report, the critical-pair subset, etc. The HIGH/MEDIUM filter is a refinement of an otherwise-complete prompt, not a replacement for it.
-
-3. **Filter re-pass fix lists through Stage 3b critical-pair retraction.** Findings contradicting an active critical-pair policy are retracted, not applied. Same procedure as the original Stage 2 → 3b filtering.
-
-4. **Detect cross-persona disagreement on diff-hunk spans (Stage 3c re-application).** If two re-pass personas file contradictory fixes on the same diff hunk, label `STABLE_DISAGREEMENT` and persist to blockers — do NOT auto-apply either.
-
-5. **Apply surviving fixes as additional Stage 3d edits.** Use the same Consolidate Non-Conflicting Fixes procedure (Group by target file; apply in severity order). Authority order if the re-pass finding lands on multiple files: `decisions.md` > `brief.md` > engineering plan.
-
-6. **Re-run Post-fix premise verification on the new edits.** The re-pass writes prose, so the same verification machinery applies.
-
-7. **Record metrics.** Update the verdict template with: re-pass agents spawned, re-pass findings raised, re-pass findings retracted (critical-pair), re-pass STABLE_DISAGREEMENT spans, re-pass fixes applied, re-pass falsified claims (from the second premise verification).
-
-The cost asymmetry justifies this: spawning 3 focused agents on bounded diff hunks is cheap relative to a full re-prosecution invocation that the user has to trigger by re-invoking the skill.
+- **Fan-out** — one focused agent per **(artifact, persona)** pair from the Stage 2 panel, not one per persona. This layer writes three artifacts (engineering plan, brief, `decisions.md`); collapsing to one agent per persona under-covers the cross-file edits.
+- **Diff hunks** — `git diff --unified=3 <pre-orchestrator-tree-ish>..HEAD -- features/<feature>/`, capturing added-line spans across the engineering plan, brief, and decisions log.
+- **Prompt overrides** — `{audit_report_bullets}` gains a "Diff hunks under review" block listing each (path, line range, verbatim added text); `{skill_specific_preamble}` is `re_pass: focused_diff_hunks; round_number: <N>; original_pass_completed: yes`; the HIGH/MEDIUM filter adds "Do not file premise-inversion RESETs — those are an entry-point-only mechanism, and premise inversions on rewritten prose are caught by post-fix verification, not this pass."
+- **Authority on multi-file findings** — class-aware per `principles.md` § Cross-artifact authority order: Class A follows `brief.md > decisions.md > engineering plan`; Class B follows `decisions.md > engineering plan`.
+- **Metrics** — agents spawned, findings raised, findings retracted, disagreement spans, fixes applied, falsified claims from the second verification pass.
 
 ### Classify Remaining Unresolved Findings
 
-See `~/.claude/skills/_review-common/blocker-classes.md`. Active for engineering plan review: `STRUCTURAL_LINT_FAILED`, `BRIEF_AMENDMENT_NEEDED`, `STABLE_DISAGREEMENT`, `OPEN_QUESTION`, `IMPLEMENTABILITY_GAP`, `UNCORROBORATED_RESET`, `FIX_INTRODUCED_PREMISE_INVERSION`, `POLISH_PLATEAU`, `REPO_STATE_DRIFT`.
+See `~/.claude/skills/_review-common/blocker-classes.md`. Active for engineering plan review: `STRUCTURAL_LINT_FAILED`, `GOAL_VERIFICATION_GAP`, `BRIEF_AMENDMENT_NEEDED`, `CHUNK_SURFACE_EXCESS`, `AUTHOR_GATE_DRIFT`, `STABLE_DISAGREEMENT`, `OPEN_QUESTION`, `IMPLEMENTABILITY_GAP`, `UNCORROBORATED_RESET`, `FIX_INTRODUCED_PREMISE_INVERSION`, `REMEDIATION_INCOMPLETE`, `DECISIONS_PROVENANCE_GAP`, `POLISH_PLATEAU`, `REPO_STATE_DRIFT`. `REMEDIATION_INCOMPLETE` and `DECISIONS_PROVENANCE_GAP` are filed by the Round Memory pass's Remediation-completeness sub-pass and are **exempt from Priority-2 carry-forward** — each is an assertion about the completeness of the carry-forward record itself, so retracting it against that record is circular. `DECISIONS_PROVENANCE_GAP` is additionally exempt from Priority 1: a citation to a `decisions.md` entry that does not exist cannot be retracted by `decisions.md`. `GOAL_VERIFICATION_GAP` is **Class A** — skip Priority 1 decisions-log retraction (a bound entry cannot drop it), exactly as `BRIEF_GOAL_UNDELIVERED` / `SURFACE_PARITY_GAP`. `CHUNK_SURFACE_EXCESS` and `AUTHOR_GATE_DRIFT` are HARD blockers gating CLOSED and APPROVED (matching `CONCERN_GATE_FAILED`'s precedent in the author skill); `CHUNK_SURFACE_EXCESS` is exempt from decisions-log-first carry-forward unless the cited `decisions.md` row explicitly arbitrates aggregate surface area (not just one component concern).
 
 **Carry-forward consultation.** Two priorities, applied in order. Priority 1 is the *durable* arbitration record; Priority 2 is the *ephemeral* round-cache. Both are consulted; whichever drops the finding first wins.
 
-**Priority 1 — Decisions log (durable record).** `Read` `features/<feature>/decisions.md` if it exists. For each surviving finding, scan decisions.md for entries where ALL of:
+**Priority 1 — Decisions log (durable record), class-aware.** `Read` `features/<feature>/decisions.md` if it exists. The retraction logic is split by finding class per `_review-common/principles.md` § Cross-artifact authority order.
+
+**Class-A exemption (mandatory, runs first).** Classify each surviving finding's class before applying retraction:
+- Finding's `evidence` field contains a verbatim quote from `brief.md` § Goals / Non-goals / User-facing changes, OR the finding's class is `BRIEF_NONGOAL_TRESPASS` / `BRIEF_GOAL_UNDELIVERED` / `SURFACE_PARITY_GAP` (filed by Stage 1.5 Brief-conformance audit) / `GOAL_VERIFICATION_GAP` (filed by the Ground-Truth Goal-verification audit) → **Class A**. **Skip Priority 1 retraction entirely.** Class A findings are NEVER dropped by decisions-log carry-forward, even when the contradicting evidence is itself a bound `decisions.md` entry. The class-A exemption is the whole point of Stage 1.5; without it, the accumulation pattern (bound decisions trespassing brief Non-goals across rounds) resumes.
+- Finding cites a cross-chunk identifier (file path, schema column, module ownership, transaction boundary) → **Class B**. Proceed with Priority 1 retraction below.
+- Finding cites a chunk-internal target only → **Class C**. Proceed with Priority 1 retraction below.
+- Ambiguous (cites both brief Non-goal AND wiring identifier) → **Class A** (stricter wins). Skip retraction.
+
+Record the class on every finding before applying carry-forward. The verdict template's `decisions_md_consultation` block reports `findings_dropped_class_B: <n>; findings_dropped_class_C: <n>; class_A_exempt: <n>` so a verdict can be audited for whether the exemption fired correctly.
+
+**For Class B and C findings only**, scan decisions.md for entries where ALL of:
 - The entry's `Decision:` subject substring-matches the finding's `path_or_section` (matching identifier, section heading, or quoted phrase fragment ≥4 words).
-- The entry's `Status:` is `bound` (case-insensitive).
+- The entry's `Status:` is `bound` (case-insensitive) and the entry is in the `## Active (bound)` section — an entry marked `superseded by "<title>" (<date>)` or `obsolete` in the `## Archived (superseded / obsolete)` tail never binds or retracts (per `~/.claude/skills/_review-common/principles.md` § What counts as a bound entry).
 - The finding contradicts the bound resolution (the persona is filing a fix that would *undo* the bound decision, or a fix that asserts the opposite of what was bound).
 
 When all three match, **drop the finding** with note `RETRACTED: contradicts bound decisions.md entry "<entry subject>" (<entry date>); entry's Why: "<verbatim Why paragraph, capped at ~200 chars>"`. The verdict surfaces the retraction so the user sees their prior arbitration was honored.
@@ -817,13 +949,15 @@ Three-state verdict from `_review-common/blocker-classes.md`. Pick exactly one: 
 
 The semantic difference: APPROVED says "the *shape* is right; remaining work is decision-making, not structure-fixing." CLOSED says "you can write the next per-chunk plan and have it cohere with the others." Only CLOSED unblocks per-chunk plan writing.
 
+**Final line — verdict banner.** After the output block below and any Scope-Reduction-Candidates block, run the shared verdict-banner script and emit its output verbatim (`~/.claude/skills/_review-common/blocker-classes.md` § Verdict banner) as the **very last** thing in your response, so the CLOSED / APPROVED / NEEDS USER INPUT status is visible without scrolling.
+
 ### Output
 
 ```
-## Engineering Plan Review v2 Complete: features/<feature>/engineering-plan.md
+## Engineering Plan Review v2 Complete: <plan-root>/engineering-plan.md
 
 **Round:** {round_number} {(plan_growth: +N% / unchanged-section gate active) | (round 1 — no prior state)}
-**State source:** {`Loaded from ~/.claude/cache/review-state/<feature-slug>.json (round N → N+1)` | `Round 1 (no prior state)` | `Reconstructed from decisions.md (state file missing; round_number reset to 1; recently_resolved_blockers seeded from decisions log)`}
+**State source:** {`Loaded from ~/.claude/cache/review-state/<slug>.json (round N → N+1)` | `Migrated from legacy ~/.claude/cache/review-state/<feature>.json → <slug>.json (round N → N+1)` | `Round 1 (no prior state)` | `Reconstructed from decisions.md (state file missing; round_number reset to 1; recently_resolved_blockers seeded from decisions log)`}
 **Personas:** {names}
 **Ground Truth audit:** brief_trace PASS / N hard findings; repo_reality PASS / N hard findings; structural_lint PASS / N findings; decision_closure: {n cross-chunk-wiring HARD, n brief-layer HARD, n reclassification → OPEN_QUESTION, n unclear → Persona Prosecution}
 **Mechanical fixes applied:** {count}
@@ -838,8 +972,23 @@ The semantic difference: APPROVED says "the *shape* is right; remaining work is 
 **Orchestrator retractions (critical-pair policy):** {count}
 **Post-fix premise verification:** verification_attempts={n}; verified={n}; falsified={n}; new_blockers_filed={n}
 **Same-round focused re-prosecution:** {skipped (no orchestrator edits) | ran with {n} agents on {m} diff hunks; findings raised: {f}; retracted: {r}; STABLE_DISAGREEMENTs: {s}; fixes applied: {a}; second-pass falsified claims: {p}}
+**Class sweep:** {skipped (no sweep-eligible categories) | ran with {n} agents; siblings_found: {n}; siblings_after_critical_pair_filter: {n}; peer-sets widened: {n}/{total}}
+**Structural sweep (unseeded):** {ran with {n} agents over {universes}; members: {n}; gaps: {n} ({severities}); undetermined: {n} | universes skipped: {universe} ({reason})}
 **Final Tier 1 weight:** {n}
 **Final Tier 2 weight:** {n} (floor: 4)
+
+### Structural sweep (unseeded)
+Always rendered when the plan has a qualifying universe — an all-clean sweep is the evidence the universe was covered, and it is what makes a `CLOSED` verdict mean more than "no reviewer noticed anything".
+- Universe: {name} — {members_enumerated} members: {closed} closed, {gap} gap, {na} n/a, {undetermined} undetermined
+- Skipped: {universe} ({reason})
+- Gaps promoted to findings: {n} ({severities})
+
+### Class sweep audit
+For each class swept (omit block entirely when class_sweep.ran=false):
+- Class: {name} ({class_notion}) — bare invariant: {bare_invariant}
+- Peer-set: handed {peer_set_handed} → walked {peer_set_walked} {(widened — {justification}) | (confirmed widest)}; swept clean: {n}
+- Instances: {seeds} seed + {siblings_found} sibling ({siblings_after_critical_pair_filter} survived critical-pair filter); resolution: all fixed this round | {n} escalated as {blocker class}
+- Singleton classes recorded (no peer-set): {list, or none}
 
 ### Changes Made
 - Plan: {bullets}
@@ -858,6 +1007,10 @@ The semantic difference: APPROVED says "the *shape* is right; remaining work is 
 - {chunk-slug}: {undecided_count} undecided items point at this chunk. Tradeoff: {one-sentence loss}. **Lever:** drop this chunk and re-invoke, instead of binding {undecided_count} decisions.
 
 ### Blockers (if any)
+- [BRIEF_NONGOAL_TRESPASS] {plan section or bound decisions.md entry} — brief Non-goal: "{verbatim quote}"; trespassing evidence: "{verbatim quote}"; reasoning: {prosecutor reasoning paragraph}. Resolution paths: {amend_brief / drop_section / unbind_decision}.
+- [BRIEF_GOAL_UNDELIVERED] {brief Goal} — Goal: "{verbatim quote}"; the engineering plan's Brief Mapping table lists chunks {x, y, z} but none non-trivially delivers it (supporting-infrastructure routing alone does not count). Resolution paths: {add_delivering_chunk / amend_brief_drop_goal}.
+- [SURFACE_PARITY_GAP] {brief Goal} — Goal: "{verbatim quote}"; intended outcome + domain + authoritative signal: {reconstructed maximal_scope}; narrowing axis: {subset-of-domain | weaker-substitute-basis | premature-action-before-basis}; the shortfall: {the specific consumer/surface/input/stage delivered by a weaker proxy, not at all, or acted on irreversibly before its basis exists — chunks {x, y}}. {deferred path: why the residual is required-work, not a launch-acceptable cut}. {mechanism-phrased Goal: note it needs outcome-rephrasing upstream}. Resolution paths: {extend_coverage / scope_down_brief}.
+- [GOAL_VERIFICATION_GAP] {brief Goal / Non-goal, verbatim} — {missing acceptance chunk | Goal has no `Verified by` proof | testable-absence Non-goal has no owning test | Non-goal mis-classified scope-boundary}. The Goal may be delivered, but nothing proves it, so a later refactor can break the contract with no failing test. Resolution paths: {add_acceptance_chunk / add_verified_by_proof / reclassify_and_add_absence_test / keep_manual_review_with_reason}. (Class A — not retracted by a bound decision.)
 - [BRIEF_AMENDMENT_NEEDED] {finding} — {what brief change is needed and why}
 - [STABLE_DISAGREEMENT] {finding} — Persona A proposes {fix A}; Persona B proposes {fix B}. Pick one.
 - [OPEN_QUESTION] {finding} — {question}
@@ -891,26 +1044,34 @@ When 2+ personas run, also output:
 
 - **Status-frontmatter check is mandatory and runs first.** An engineering plan with frontmatter `Status: needs-user-input` is mid-cycle authoring state (the partial draft was written by `/engineering-plan-author`'s NEEDS_USER_INPUT path with a `## Pending blockers` section appended); skill refuses to run against it. The same check applies to the upstream brief — a `Status: needs-user-input` brief means the engineering plan is descended from an unstable source and cannot be reviewed cleanly. Both checks are deterministic and run before the Structural Lint Gate.
 - **Ground Truth phase is mandatory.** Persona agents reading the plan without the audit will re-prosecute facts.
-- **Round Memory pass is mandatory.** Skipping it disables the plan-growth gate and section-diff gate, returning the skill to its pre-fix thrash mode. State file lives at `~/.claude/cache/review-state/<feature-slug>.json` (NOT in the project repo).
+- **Round Memory pass is mandatory.** Skipping it disables the plan-growth gate and section-diff gate, returning the skill to its pre-fix thrash mode. State file lives at `~/.claude/cache/review-state/<feature>[__<track>]__engineering-plan.json` (NOT in the project repo).
 - **Decision-Closure Audit is mandatory, including the prior-classification consistency check.** Skipping the consistency check lets the same decision flip between `cross-chunk-wiring` and `chunk-internal` across rounds, forcing the user to add then delete the same binding.
 - **Persona Prosecution agents return fix lists; never edit files.** All edits applied by orchestrator.
 - **Premise interrogation pass is mandatory.** Both the repo-state and brief-environment sub-passes MUST run. A persona producing zero RESETs must explicitly state `premise_interrogation: passed` (covering both sub-passes). Skipping the brief-environment sub-pass is a workflow bug — it lets brief premises that contradict project memory poison every downstream chunk.
 - **Imagined-Implementer Dry Run is mandatory.** Skipping removes the convergence forcing-function and lets `IMPLEMENTABILITY_GAP`s slip through.
 - **RESET corroboration gate.** Single-persona RESET reclassified to CRITICAL HARD, not auto-escalated. Two-of-three on the same span is the only short-circuit signal.
 - **Orchestrator applies critical-pair policies before applying fixes.** Findings contradicting a policy are retracted, not relitigated.
-- **Never** mark CLOSED while any blocker class (`BRIEF_AMENDMENT_NEEDED`, `STABLE_DISAGREEMENT`, `OPEN_QUESTION`, `IMPLEMENTABILITY_GAP`, `UNCORROBORATED_RESET`, `REPO_STATE_DRIFT`) is non-empty.
-- **Never** mark APPROVED while a non-`IMPLEMENTABILITY_GAP` blocker is present.
+- **Never** mark CLOSED while any blocker class (`BRIEF_NONGOAL_TRESPASS`, `BRIEF_GOAL_UNDELIVERED`, `SURFACE_PARITY_GAP`, `BRIEF_AMENDMENT_NEEDED`, `STABLE_DISAGREEMENT`, `OPEN_QUESTION`, `IMPLEMENTABILITY_GAP`, `UNCORROBORATED_RESET`, `REPO_STATE_DRIFT`) is non-empty.
+- **Never** mark APPROVED while a non-`IMPLEMENTABILITY_GAP` blocker is present (including `BRIEF_NONGOAL_TRESPASS` / `BRIEF_GOAL_UNDELIVERED` / `SURFACE_PARITY_GAP` — Class A blockers fail APPROVED as well as CLOSED, because a plan that trespasses the brief or delivers a Goal over a subset of its domain is not shape-correct).
 - **APPROVED does not unblock per-chunk plan writing.** Only CLOSED does. Communicate clearly.
 - **Never** edit the brief just to make a chunk fit. That's `BRIEF_AMENDMENT_NEEDED`.
 - **Never** weaken the plan to resolve a finding. That's `OPEN_QUESTION`.
 - **Never** auto-fix an `IMPLEMENTABILITY_GAP`. The decision requires user judgment.
 - **Orchestrator verifies its own edits.** Post-fix premise verification runs after Consolidate Non-Conflicting Fixes, before Classify Remaining Findings. Skipping it allows the orchestrator's own prose-rewrite fixes to introduce premise inversions that cascade into the next round.
+- **Class Sweep is mandatory** whenever a surviving finding declares `class_notion: recurring_category` (or a `propagated_identity` with a >1 peer-set). It runs as an orchestrator sub-pass after the RESET short-circuit gate and the finding-thinning filters, before Consolidate: one sweep agent per distinct such category walks the peer-set (chunk rows / Goals / Non-goals / closure rows / sibling tracks) and promotes every sibling to a same-round finding, routed through the critical-pair filter. Per `~/.claude/skills/_review-common/class-sweep.md`. Closes a defect class in the round it was found instead of leaking one sibling per round. Skipped only when zero sweep-eligible categories exist or a RESET short-circuit already fired. **Each sweep agent must perform the Method-step-1 peer-set challenge** — restate the class as its bare invariant and widen the handed peer-set to that invariant's widest applicable set before walking. A faithfully-walked *narrow* peer-set reports clean while leaving the class open, and that failure is invisible in the instance counts.
+- **Structural Sweep is mandatory and is NOT contingent on the round producing findings.** Per `~/.claude/skills/_review-common/structural-sweep.md`: one unseeded agent per applicable universe (Universe L — every gate × every condition, is every failing state exitable; Universe P — every destructive path × every protection the plan itself requires), run over both plans under the tracked layout. It exists because the Class Sweep is seeded and therefore structurally blind to a class no persona filed — the pipeline's only unseeded exhaustive pass otherwise covers brief Goals alone. A round with zero persona findings still runs it; a verdict reporting no structural sweep on a gated plan is incomplete no matter how clean the rest of the round looked. Skipped per-universe only on the stated skip rule, and every skip records its reason.
 - **Same-round focused re-prosecution is mandatory** when ANY of: orchestrator engineering-plan fix count > 0, cross-file fix count (brief / decisions log) > 0, premise verification falsified-claim count > 0. Skipping it lets persona-class defects in orchestrator-rewritten prose bake in and surface as fresh blockers next round. Bounded: exactly one re-pass on the diff hunks Stage 3 wrote.
+- **The Remediation-completeness pass is mandatory on every `round_number > 1`**, and covers what the two verification stages above structurally cannot: post-fix premise verification and the same-round re-pass both scope to the orchestrator's *own* edits, while the majority of text entering a round is remediation the **user** wrote between rounds to clear the last verdict's blockers. Every prior blocker gets all three questions — closed, swept into every coupled site, arbitration recorded in `decisions.md` — with no sampling. The swept question carries the yield: a remediation that adds a terminal action, a chunk, a marker, or a gate changes the size of sets that other sections state as fixed counts and that other tables enumerate as complete, and landing it only in its motivating section is the dominant defect shape at this layer. Skipping the pass makes a `NEEDS USER INPUT` → re-invoke cycle non-convergent by construction: each round's fix silently seeds the next round's findings, and the blocker count stops falling for reasons no stage attributes.
 - **Carry-forward consultation is mandatory and uses two priorities in order.** Priority 1: consult `features/<feature>/decisions.md` for findings contradicting bound entries — drop them with citation. Priority 2: consult `recently_resolved_blockers` for ephemeral round-cache matches — downgrade to `OPEN_QUESTION` unless `current_reclassification_justification` is filed. Authority order: `decisions.md` > `engineering-plan.md` > prior round's verdict text.
-- **Compliance self-check.** Before emitting the verdict, confirm: (1) post-fix premise verification ran with non-empty stats; (2) same-round re-prosecution ran when any of the three triggering conditions held, and recorded re-pass agent counts; (3) Priority 1 carry-forward (decisions.md) fired when the file exists, even on round 1; (4) Priority 2 carry-forward fired when `recently_resolved_blockers` had matching entries; (5) if state was reconstructed from `decisions.md`, the verdict's State source line reflects it.
+- **Compliance self-check.** Before emitting the verdict, confirm: (1) post-fix premise verification ran with non-empty stats; (2) same-round re-prosecution ran when any of the three triggering conditions held, and recorded re-pass agent counts; (3) Priority 1 carry-forward (decisions.md) fired when the file exists, even on round 1; (4) Priority 2 carry-forward fired when `recently_resolved_blockers` had matching entries; (5) if state was reconstructed from `decisions.md`, the verdict's State source line reflects it; (6) **Stage 1.5 Brief-conformance audit ran in full** — the Brief-conformance Prosecutor was spawned AND one Scope-fidelity Adversary was spawned per at-risk Goal (`brief_conformance_report.scope_adversaries_spawned` equals the length of `goals_at_risk`, and every at-risk Goal — domain-quantified or authoritative-signal — is in `goals_at_risk` or justified in `goals_skipped_not_at_risk`); `brief_conformance_report` is non-empty in Stage 3 input; and any filed `BRIEF_NONGOAL_TRESPASS` / `BRIEF_GOAL_UNDELIVERED` / `SURFACE_PARITY_GAP` findings appear in the verdict. If no adversary was spawned but at-risk Goals exist, the audit is incomplete — re-run Stage 1.5's step (b) before posting; (7) **Class-A exemption fired correctly** — if `brief_conformance_report.findings_high_hard > 0` AND `decisions_md_consultation.class_A_exempt < findings_high_hard`, some Class A findings were dropped by carry-forward; re-classify and restore them before posting; (8) **Class Sweep ran for every recurring category** — `class_sweep.sweep_agents_spawned` equals the count of distinct sweep-eligible (non-singleton) seed categories after grouping, every spawned agent recorded a `peer_set_size` and non-empty `swept_clean` (instances with empty `swept_clean` on a multi-member peer-set = the set was not walked; re-run that agent), and every surviving sibling appears in the consolidated fix set or a blocker. A round with `class_notion: recurring_category` seeds but `sweep_agents_spawned: 0` skipped the stage — run it before posting; (9) **Goal-verification audit ran** — `audit_report.goal_verification` is populated: the acceptance chunk was confirmed present + DAG-sink, `goals_with_proof == goals_total`, `non_goals_classified == non_goals_total`, and any `GOAL_VERIFICATION_GAP` filed appears in the verdict and was NOT dropped by carry-forward (it is Class A). A verdict with `goal_verification` absent skipped the audit — run it before posting; (10) **Structural Sweep ran every applicable universe** — `structural_sweep.ran` is true whenever the plan has a qualifying universe, `universes_run` plus `universes_skipped` accounts for every universe this layer declares with a reason per skip, each universe recorded `members_enumerated` and a non-empty `cells` list, and every GAP appears in the consolidated fix set or a blocker. **This check is independent of the round's finding count** — a zero-finding round that skipped the stage is non-compliant, which is precisely the case the stage was added for; (11) **Repo Reality Sweep ran** — `repo_reality_sweep.ran` is true whenever the plan has chunks; `chunks_swept` + `chunks_deferred` + `chunks_inherited_clean` accounts for every chunk across both plans under the tracked layout, with a reason per deferral and a `from_round` per inheritance; every swept chunk records a non-empty `incumbent_files_read` and an `enumeration_query` per universe (a universe with no query was not run, whatever its cells say); every `inherited_clean` chunk has stored `incumbent_files_blob_shas` that still match HEAD; and every GAP appears in the consolidated fix set or a `REPO_PREMISE_GAP` blocker. **Independent of the round's finding count** — a clean round that skipped this stage is non-compliant, which is the case it was added for; (12) **every Class-Sweep agent performed the peer-set challenge** — each category recorded a `bare_invariant`, both `peer_set_handed` and `peer_set_walked`, and an explicit `peer_set_widened` flag with a justification when true. A `peer_set_walked` copied from `peer_set_handed` with no evidence the supertype question was asked did not run Method step 1; re-run that agent; (13) **Remediation-completeness ran on every prior blocker** — on `round_number > 1`, `remediation_completeness` has one entry per entry in the prior round's `prior_blockers`, each with a non-empty `coupled_sites_checked` and an explicit `decisions_entry` (a heading, or `none` with its class). An entry with `closed: yes` and an empty `coupled_sites_checked` answered only the first of three questions; re-run it. Any `REMEDIATION_INCOMPLETE` / `DECISIONS_PROVENANCE_GAP` filed must appear in the verdict — neither is retractable by Priority-2 carry-forward, since both are assertions *about* the carry-forward record rather than findings subject to it.
 - **Always** quote verbatim from plan, brief, repo, or audit_report when justifying a finding.
 - **Always** label remaining findings with their blocker class.
 - **No re-review loop within a single invocation.** Escalate; let the user re-invoke.
+- **Do not re-run `/engineering-plan-author` to clear a completed review.** When the verdict is `NEEDS USER INPUT` (or `APPROVED` with open cross-chunk decisions), the next step is targeted edits that clear the listed blockers / bind the open decisions, then re-invoking `/engineering-plan-review-v2` (optionally triaged through `/explain-blockers` or `/solve-blockers`). Re-running `/engineering-plan-author` re-enters the full authoring pipeline over the whole engineering plan — wrong tool for clearing ordinary blockers (`OPEN_QUESTION`, `STABLE_DISAGREEMENT`, `IMPLEMENTABILITY_GAP`, `BRIEF_AMENDMENT_NEEDED`, and the like). Re-run the author skill only in two cases: the mid-cycle `Status: needs-user-input` refuse path (the artifact is already a partial draft and the author resumes it in warm mode); or the rare case where the plan is fundamentally broken and must be re-authored wholesale (ask in plain language). The author-gate blockers (`AUTHOR_GATE_DRIFT`, `CONCERN_GATE_FAILED`) are NOT re-author cases — the reviewer already recomputes those gates, so they are cleared by the same targeted agent edits as every other blocker (decompose / rewrite the row / cite an arbitration) plus reconciling the stale author-state field. Re-running the author to clear them desyncs the in-flight review state (`section_hashes`, `round_number`, blocker carry-forward) for no benefit.
+
+## Compliance self-check (before rendering verdict)
+
+Run the checklist in `~/.claude/skills/_review-common/orchestrator.md` § Compliance self-check and state each result in the verdict. A failed check is reported, never silently skipped. Add one layer-specific line: whether the RESET corroboration check ran, and on how many single-persona RESET claims.
 
 ## Edge cases
 
@@ -921,6 +1082,6 @@ When 2+ personas run, also output:
 - **Chunk plan exists in `implementation/`** → Ground Truth spot-checks consistency with engineering-plan chunk-index row. Doesn't full-review (that's `/plan-review-v2`'s job).
 - **Multiple engineering plans across features in one invocation** → out of scope. Run once per feature.
 - **Decisions log missing** (`features/<feature>/decisions.md`) → `OPEN_QUESTION` only if the plan has a non-obvious architectural choice without a `Why:` paragraph; otherwise no finding.
-- **State file missing but `decisions.md` exists** → reconstruct partial state. Round number resets to 1. Seed `recently_resolved_blockers` from `decisions.md` entries (each entry's `Decision:` line becomes a row with `blocker_class_when_resolved: RESOLVED`, `path_or_section` from the entry's subject, `user_decision` from the entry's `Why:` paragraph capped at ~200 chars, `carry_forward_until_round = 2`). Section hashes recompute clean (no diff vs prior, full prosecution latitude). Verdict's State source records `Reconstructed from decisions.md`. Warn the user that round-counter reset means plan-growth and section-diff gates are dormant for this invocation.
+- **State file missing but `decisions.md` exists** → reconstruct partial state. Round number resets to 1. Seed `recently_resolved_blockers` from `decisions.md` entries (Active bound entries only — skip the `## Archived (superseded / obsolete)` tail; per `~/.claude/skills/_review-common/principles.md` § What counts as a bound entry) (each entry's `Decision:` line becomes a row with `blocker_class_when_resolved: RESOLVED`, `path_or_section` from the entry's subject, `user_decision` from the entry's `Why:` paragraph capped at ~200 chars, `carry_forward_until_round = 2`). Section hashes recompute clean (no diff vs prior, full prosecution latitude). Verdict's State source records `Reconstructed from decisions.md`. Warn the user that round-counter reset means plan-growth and section-diff gates are dormant for this invocation.
 - **State file missing AND no `decisions.md`** → cold start. Round 1, empty `prior_blockers`, empty `recently_resolved_blockers`. No reconstruction; full re-prosecution latitude. This matches the legacy behavior.
 - **HEAD changes mid-review** → `REPO_STATE_DRIFT`. User re-runs.

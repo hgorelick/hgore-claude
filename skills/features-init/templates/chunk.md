@@ -1,11 +1,14 @@
 # Chunk: `<slug>` — <Chunk Name>
 
-**Slug:** `<slug>` (kebab-case, 2–4 words; matches the engineering plan's chunk-index row and this file's basename)
+**Slug:** `<slug>` (kebab-case, 2–4 words; matches the engineering plan's chunk-index row. The on-disk filename is this slug behind an auto-assigned `<NN>-` creation-index prefix — `<NN>-<slug>.md` — assigned by `/plan-author`; the slug itself never carries the number.)
 **Feature:** <feature-name>
 **Status:** proposed | approved | in-progress | merged | verified
 **PR:** <link once opened>
 **Depends on:** <chunk slugs, or "—">
 **Brief:** [`../brief.md`](../brief.md) · **Engineering plan:** [`../engineering-plan.md`](../engineering-plan.md)
+<!-- Tracked feature (plans under features/<feature>/plans/<track>/): the engineering-plan
+     link is unchanged, but the brief sits two levels higher — [`../../../brief.md`]. -->
+
 
 > This plan is derived from the engineering plan, which is derived from the brief. If you can't restate this chunk's purpose in terms of a brief Goal or User-facing change, stop and re-read both before continuing.
 >
@@ -21,7 +24,7 @@ Which brief items this chunk serves. Pulled from the engineering plan's Brief Ma
 
 - **Goal:** <verbatim from brief>
 - **User-facing change:** <verbatim from brief, if applicable>
-- **Non-goal honored:** <if this chunk specifically enforces a non-goal — e.g., a CI gate that blocks the non-goal capability>
+- **Scope exclusion honored:** <if this chunk specifically enforces an exclusion from the brief's Scope buckets — e.g., a CI gate that blocks the excluded capability. Name the bucket: "(Intentionally deferred, #NNN)" / "(Not in scope this release)" / "(Not planned)">
 
 ## Context pack
 
@@ -122,6 +125,6 @@ What you eyeball before approving the PR. The QA-with-myself contract.
 
 ## Out of scope
 
-What this chunk will *not* touch. Deferred to later chunks or to non-goals.
+What this chunk will *not* touch. Deferred to later chunks, or excluded by the brief's Scope buckets.
 
 - <item>

@@ -13,6 +13,15 @@
             "command": "~/.claude/hooks/block-banned-bash.sh"
           }
         ]
+      },
+      {
+        "matcher": "ScheduleWakeup|CronCreate|Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/block-self-scheduling.sh"
+          }
+        ]
       }
     ]
   }

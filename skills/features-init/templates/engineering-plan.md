@@ -13,7 +13,7 @@ lives in `git log`, the PR list, and the per-chunk plans. NEVER add it here.
 
 ARCHITECTURE LEVEL ONLY. The engineering plan describes the architecture and
 the chunk graph. It does NOT specify chunk-internal implementation. Per-chunk
-plans (`features/<feature>/implementation/<slug>.md`) are written just before
+plans (`features/<feature>/implementation/<NN>-<slug>.md`) are written just before
 each chunk starts, because earlier chunks change the codebase and invalidate
 later assumptions. Baking implementation detail into the engineering plan
 makes the plan stale by the time the implementer reads it.
@@ -67,14 +67,19 @@ CHUNK IDENTIFIERS — slugs, not numbers:
   - If a chunk grows, split it into two new concern-named slugs
     (`cascade-rewrite` + `callsite-migration`) — never introduce a sub-letter
     (`cascade-rewrite-a/b/c`) or a phase suffix.
-  - Slugs are also the filename of the per-chunk plan:
-    `features/<feature>/implementation/<slug>.md`.
+  - Slugs name the per-chunk plan file, behind an auto-assigned `<NN>-`
+    creation-index prefix: `features/<feature>/implementation/<NN>-<slug>.md`.
+    The forbidden `NN-*` shape above is about the SLUG; the filename prefix is a
+    separate ordering affordance that `/plan-author` assigns and `/plan-lint`
+    strips before checking the slug — never type it into a slug or the chunk index.
 
 FORBIDDEN PATTERNS — do NOT do any of these:
   - Status / PR / Mode / Owner / Last-updated columns or fields. Frozen plans
     do not track. Your only columns in the chunk index are:
     Slug | Chunk | Code deps.
-  - Numbered chunk identifiers (`01`, `27a`, `Phase 2.b`). Use slugs.
+  - Numbered chunk identifiers (`01`, `27a`, `Phase 2.b`) in the chunk index. Use
+    slugs. (The on-disk plan filename's `NN-` prefix is not an identifier — it is an
+    auto-assigned ordering affordance and never appears in the index or a slug.)
   - Implementation detail (test names, file artifacts, internal phases,
     function names beyond architecture-level contracts). See "ARCHITECTURE
     LEVEL ONLY" above.
@@ -96,7 +101,8 @@ FORBIDDEN PATTERNS — do NOT do any of these:
 CROSS-REFERENCE FORMAT:
   - Chunks: `chunk schema-migration`, `chunks cascade-rewrite + callsite-migration`.
     Never "chunk 05", "Ch5", "Phase 2.b".
-  - Other features: "features/<name>/engineering-plan.md".
+  - Other features: "features/<name>/engineering-plan.md"
+    (tracked feature: "features/<name>/plans/<track>/engineering-plan.md").
   - Source files: backticked path, e.g. `src/lib/runId.ts`.
   - This plan's other sections: by section title, not "above" / "below".
 
@@ -108,31 +114,46 @@ TONE:
 ==========================================================================
 -->
 
-> The brief is the input to this plan. Every chunk traces to a Goal, User-facing change, or Non-goal in the brief — see Brief Mapping below. If the brief changes, re-walk the mapping before amending the plan.
+> The brief is the input to this plan. Every chunk traces to a Goal, User-facing change, or Scope entry in the brief — see Brief Mapping below. If the brief changes, re-walk the mapping before amending the plan.
 
 ## Brief mapping
 
 <!--
 The load-bearing link between brief and plan. Tables only.
 - One row per Goal / Change verbatim from the brief (left cell).
-- Right cell: chunk numbers that deliver it. Empty right cell = planning gap; fix
+- "Delivered by chunks": chunk slugs that deliver it. Empty = planning gap; fix
   the brief or fix the chunks.
-- "Verified by" column on the User-facing changes table names the chunk that ships
-  the test (e2e, integration, manual checklist) — or "Manual review" if no automated check.
+- "Verified by" (Goals AND User-facing changes): the chunk that owns the EXECUTABLE
+  PROOF the outcome holds. For Goals this is the dedicated acceptance chunk (see
+  Chunk index) — a contract-level acceptance test, distinct from the delivering
+  chunk's own TDD, so a durable regression guard proves the brief contract in one
+  place. "Manual review" is allowed ONLY for a Goal whose outcome is genuinely not
+  observably automatable — and then the row carries a one-line reason. A Goal that
+  COULD be asserted but is left to manual check is a GOAL_VERIFICATION_GAP.
 - "Supporting infrastructure" subsection only if some chunks don't directly deliver
   a brief Goal/Change but exist to unblock ones that do. Each bullet names the
   chunk(s) and which goal-bearing chunk(s) they unblock.
-- "Non-goals enforcement" subsection: one bullet per brief Non-goal, naming how the
-  plan keeps it out (a specific chunk's CI gate, a test that asserts absence, or
-  "no chunk introduces capability X").
+- "Scope enforcement": one row per item in the brief's Scope buckets OTHER than
+  "In scope", carrying the item's Bucket and CLASSIFIED by Kind:
+  - "testable-absence" — the exclusion is an observable behavior that can be asserted
+    absent (an endpoint 404s, a flag-off path is inert, dismissed items never surface).
+    The How cell names the acceptance chunk's assert-absence test.
+  - "scope-boundary" — a capability simply not built ("no admin UI"); no test can
+    assert it. The How cell states "not test-assertable — <reason>" plus how
+    the plan keeps it out ("no chunk introduces capability X").
+  - "deferred-tracked" — the brief bucket is "Intentionally deferred"; not enforced
+    as absent, tracked at the named destination. Repeat the destination (issue
+    number or feature slug) in the How cell.
+  A scope item marked "scope-boundary" whose exclusion is in fact observably assertable
+  is a GOAL_VERIFICATION_GAP (a missing test hiding behind a mis-classification).
 -->
 
 ### Goals
 
-| Brief Goal | Delivered by chunks |
-|---|---|
-| <verbatim from brief> | <chunk slugs> |
-| <verbatim from brief> | <chunk slugs> |
+| Brief Goal | Delivered by chunks | Verified by |
+|---|---|---|
+| <verbatim from brief> | <chunk slugs> | <acceptance chunk slug, or "Manual review — <reason>"> |
+| <verbatim from brief> | <chunk slugs> | <acceptance chunk slug, or "Manual review — <reason>"> |
 
 ### User-facing changes
 
@@ -147,10 +168,13 @@ The load-bearing link between brief and plan. Tables only.
 
 - **<chunk slug(s)>** — <what they do, in one line>. <Which goal-bearing chunk(s) they unblock.>
 
-### Non-goals enforcement
+### Scope enforcement
 
-- **<non-goal verbatim from brief>** — <how the plan ensures it stays out of scope.>
-- **<non-goal verbatim from brief>** — <how the plan ensures it stays out of scope.>
+| Brief scope item | Bucket | Kind | How |
+|---|---|---|---|
+| <verbatim from brief> | Not planned | testable-absence | <acceptance chunk's assert-absence test, one line> |
+| <verbatim from brief> | Not in scope (this release) | scope-boundary | not test-assertable — <reason>; <how the plan keeps it out> |
+| <verbatim from brief> | Intentionally deferred | deferred-tracked | tracked at <destination: #NNN or feature slug> |
 
 ## Architecture summary
 
@@ -247,8 +271,8 @@ Slug rules (also enforced in the top-of-file guidance):
   - kebab-case, 2–4 words, descriptive of the chunk's concern.
   - Immutable once the plan is approved. Renames break PR links, decision-log
     references, and chunk-plan filenames.
-  - The slug is also the per-chunk plan's filename:
-    `features/<feature>/implementation/<slug>.md`.
+  - The slug names the per-chunk plan file, behind an auto-assigned `<NN>-`
+    creation-index prefix: `features/<feature>/implementation/<NN>-<slug>.md`.
 
 Chunk-name rules (the prose label that appears beside the slug):
   - 6–10 words. Plain English. Imperative-noun ("Schema migration", "Cache-bust
@@ -264,6 +288,20 @@ Code-deps cell:
   - Lists code dependencies only — i.e. chunks whose code this chunk imports or
     extends. Manual-gate dependencies (e.g. "after the audit --apply runs") live
     in the Manual gates section, not here.
+
+DEDICATED ACCEPTANCE CHUNK (required — the DAG sink):
+  - Every engineering plan ends with ONE chunk whose concern is the contract-level
+    acceptance suite: executable tests proving each brief Goal is honored on the
+    ASSEMBLED feature and each testable scope exclusion stays excluded. Slug names the
+    concern (`brief-acceptance-suite`, `goal-conformance-tests`) — never positional.
+  - It is a DAG sink: its Code-deps list every chunk that delivers a Goal or a
+    testable scope exclusion (so the suite runs against the whole feature), and
+    NO chunk depends on it.
+  - It is what the Goals `Verified by` and the testable scope items' `How`
+    cells point at. This chunk is ONE concern ("prove the brief contract") no
+    matter how many Goals it covers — it is exempt from the multi-concern heuristic.
+  - It is contract-level ONLY: it does not re-test what per-chunk TDD already covers
+    locally; it proves the brief-level outcomes end-to-end.
 -->
 
 | Slug | Chunk | Code deps |
@@ -272,6 +310,7 @@ Code-deps cell:
 | `<slug-b>` | <chunk name> | `<slug-a>` |
 | `<slug-c>` | <chunk name> | `<slug-a>` |
 | `<slug-d>` | <chunk name> | `<slug-b>`, `<slug-c>` |
+| `<acceptance-suite-slug>` | Acceptance suite: prove brief Goals honored, testable scope exclusions excluded | `<slug-a>`, `<slug-b>`, `<slug-c>`, `<slug-d>` |
 
 ## Manual gates
 
@@ -305,13 +344,14 @@ If wave-numbered, also include the cross-wave gating rule.
 ```
 Wave 1:    schema-migration ‖ llm-tier-and-runid ‖ orphan-cleanup-hardening
 Wave 2:    cascade-rewrite (← llm-tier-and-runid, schema-migration)
+Wave 3:    brief-acceptance-suite (← all delivering chunks) — the DAG sink
 ```
 
-**Cross-wave rule:** don't start wave N+1 until wave N's PRs are all merged (or `--apply`s complete, for manual waves).
+**Cross-wave rule:** don't start wave N+1 until wave N's PRs are all merged (or `--apply`s complete, for manual waves). The acceptance suite is always the final wave — it runs against the assembled feature.
 
 Or linear:
 ```
-schema-migration → wikidata-qid-backfill → cascade-rewrite → callsite-migration
+schema-migration → wikidata-qid-backfill → cascade-rewrite → callsite-migration → brief-acceptance-suite
 ```
 
 ## Risks / unknowns
@@ -343,12 +383,12 @@ Bulleted; only include lines that apply.
 ## Out of scope
 
 <!--
-Bullets. Mirror the brief's Non-goals plus any technical deferrals.
-For technical deferrals, append a one-line reason. Brief-non-goal bullets are
-verbatim and need no reason — the brief already explained.
+Bullets. Mirror the brief's Scope buckets other than "In scope", plus any
+technical deferrals. For technical deferrals, append a one-line reason.
+Brief scope bullets are verbatim and need no reason — the brief already explained.
 -->
 
-- <brief non-goal verbatim>
+- <brief scope exclusion verbatim>
 - <technical deferral> — <one-line reason>
 
 ---

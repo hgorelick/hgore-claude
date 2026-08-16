@@ -1,6 +1,7 @@
 ---
 name: brief-author
-description: Authoring-side sister to `/brief-review-v2`. Produces or rewrites a feature's `brief.md` (the upstream source-of-truth that the engineering plan and chunk plans descend from) with ground-truth verification and self-prosecution applied at write time, not review time. Catches brief-layer hallucinations (invented user populations, contradicted Goals, scope creep, banned non-goal patterns) before they cascade downstream. Persists a sidecar at `~/.claude/cache/author-state/<feature>__brief.json` recording every claim verified/dropped/softened. On HIGH+ residuals the partial draft is written to disk with frontmatter `Status: needs-user-input` plus a `## Pending blockers` section; the user resolves and re-invokes with the partial draft as warm-mode anchor so re-generation cost is paid once. Surfaces blockers as OPEN_QUESTION. Sister to `/engineering-plan-author` (engineering-plan layer) and `/plan-author` (chunk-plan layer).
+description: Writes or rewrites a feature's `brief.md` — the upstream source-of-truth the engineering plan and chunk plans descend from — applying ground-truth verification and self-prosecution at write time rather than review time. Run once per cycle, then `/brief-review-v2`. Sister to `/engineering-plan-author` and `/plan-author`.
+user-invocable: true
 ---
 
 # Brief author
@@ -13,8 +14,9 @@ The brief is the highest-leverage artifact in the feature lifecycle: every downs
 
 - `$ARGUMENTS` (optional):
   - `<feature>` — the feature directory under `features/`. If absent, infer from the current working directory or ask the user.
-  - `--draft` — quick-exploration mode; skip ground-truth and self-prosecution; emit a sidecar marked `authoring_mode: "draft"` for the user to harden later.
-  - `--rewrite` — assume `features/<feature>/brief.md` exists and you are rewriting it; warm-mode carry-forward applies.
+  - `--draft` — quick-exploration mode; skip ground-truth and self-prosecution; emit a sidecar marked `authoring_mode: "draft"` (unhardened by choice; downstream reviewers warn rather than refuse).
+
+**The author runs once per cycle.** It produces the first draft; the next step in the cycle is to run `/brief-review-v2`, and the session agent then applies its findings — plus your blocker resolutions — directly to `brief.md`. The author is not re-invoked to apply changes. There is no `--rewrite` flag. When `features/<feature>/brief.md` already exists or its author sidecar is present, invoke `/brief-author <feature>` again only for an explicit clean-slate re-author (ask in plain language); that fresh run treats the existing brief and any prior review state as carry-forward constraints — a Goal/Non-goal the user already removed is not re-introduced.
 
 ## Sidecar location
 
@@ -30,7 +32,8 @@ State load (deterministic; ~5 seconds)
   │   first author-skill invocation; Write does NOT auto-create parents and the
   │   reviewer-side machinery only creates ~/.claude/cache/review-state)
   ├─ Read sidecar at ~/.claude/cache/author-state/<feature>__brief.json (if exists)
-  ├─ Read review-state at ~/.claude/cache/review-state/<feature>__engineering-plan.json (if exists — warm carry-forward at brief layer)
+  ├─ Read review-state at ~/.claude/cache/review-state/<feature>[__<track>]__engineering-plan.json
+  │   (every track of a tracked feature; warm carry-forward at brief layer)
   └─ Determine cold vs warm mode
 
 Source ingest (deterministic; ~30 seconds)
@@ -38,12 +41,13 @@ Source ingest (deterministic; ~30 seconds)
   ├─ Read context/specs/*.md (category specs that bear on this feature)
   ├─ Read CLAUDE.md
   ├─ Read MEMORY.md + relevant project memory files
-  ├─ Read existing brief.md (if --rewrite or warm mode)
-  └─ Extract project invariants the brief MUST honor (no non-Latin names, no existing-users assumptions, etc.)
+  ├─ Read existing brief.md (warm mode — when the file or sidecar already exists)
+  └─ Extract project invariants the brief MUST honor (e.g., a data-format invariant, a pre-launch no-existing-users assumption, etc.)
 
 Draft (LLM judgment; main thread)
-  ├─ Mirror section template: Problem / Solution / Goals / Non-goals / User-facing changes / Open questions
-  ├─ Mark each Goal with "Verified by:" pointing at the metric or sub-feature that proves it ships
+  ├─ Mirror section template: Problem / Solution / Goals / Scope / User-facing changes / Open questions
+  ├─ Give each Goal a "Measured by:" clause — the check that proves it shipped whole
+  ├─ Sort every scope exclusion into one of the four buckets; deferrals name a destination
   ├─ Surface every "Open questions" entry the upstream artifacts left unresolved
   └─ Emit first draft to in-memory buffer (NOT yet written to disk)
 
@@ -92,6 +96,7 @@ Read the sidecar if it exists. Schema:
   "introduced_identifiers": [],
   "ground_truth_log": [...],
   "self_prosecution_findings": [...],
+  "exclusion_challenges": [...],
   "authoring_residual": [...],
   "prior_blockers": [
     {
@@ -122,7 +127,7 @@ The `prior_blockers` / `recently_resolved_blockers` shape mirrors the reviewer s
 
 If `last_brief_sha256` matches the SHA of `features/<feature>/brief.md` on disk and the file's mtime is recent, the brief has not changed since the last invocation; the sidecar's `ground_truth_log` is still authoritative. If the SHA differs (the user edited the brief manually) or the file is older than the sidecar implies, treat as a fresh authoring round (cold w.r.t. ground-truth, warm w.r.t. carry-forward).
 
-Also read the engineering-plan reviewer's state at `~/.claude/cache/review-state/<feature>__engineering-plan.json` if it exists. The engineering-plan reviewer's `recently_resolved_blockers` list may include brief-layer items the user already arbitrated (BRIEF_AMENDMENT_NEEDED). These are warm-mode carry-forward at the brief layer: re-introducing a Goal/Non-goal the user already removed is the worst thrash form.
+Also read the engineering-plan reviewer's state at `~/.claude/cache/review-state/<feature>__engineering-plan.json` if it exists — and for a **tracked** feature (per `~/.claude/skills/_plan-common/layout.md`), every `<feature>__<track>__engineering-plan.json` instead, since one brief has one engineering plan per track and any of them can raise a brief-layer blocker. If neither exists, fall back to the legacy bare `<feature>.json` (see that doc's Migration note). The engineering-plan reviewer's `recently_resolved_blockers` list may include brief-layer items the user already arbitrated (BRIEF_AMENDMENT_NEEDED). These are warm-mode carry-forward at the brief layer: re-introducing a Goal/Non-goal the user already removed is the worst thrash form.
 
 ---
 
@@ -131,15 +136,15 @@ Also read the engineering-plan reviewer's state at `~/.claude/cache/review-state
 Read in this order. Read once into context; do not re-read in later stages.
 
 1. `spec.md` (project root) — the product master spec. Brief Goals must trace to spec sections; brief Non-goals must not contradict spec capabilities.
-2. `context/specs/*.md` — category-specific specs. For book features, read `context/specs/clean-book-database-spec.md` if present.
-3. `CLAUDE.md` — project conventions, banned patterns, business rules. Pay attention to: the 5-item threshold, score-rounding rule, watchlist auto-remove, block-mutual-unfollow, public-rankings invariant, multi-category architecture rules.
-4. `MEMORY.md` + every memory file under `~/.claude/projects/-Users-hgorelick-Documents-ozzi-app/memory/` whose `description` field hints at relevance to this feature.
-5. Existing `features/<feature>/brief.md` (warm/rewrite modes only) + `features/<feature>/decisions.md` (every dated entry; brief-layer decisions live there). The brief.md may be in `Status: needs-user-input` state from a previous invocation — that partial draft (with the `## Pending blockers` section appended) IS the canonical warm-mode anchor; the next Draft stage starts from the partial body and only re-emits sections affected by the user's blocker resolutions.
+2. `context/specs/*.md` — category-specific specs. For domain-specific features, read the relevant category spec (e.g. `context/specs/<category>-spec.md`) if present.
+3. `CLAUDE.md` — project conventions, banned patterns, business rules. Pay attention to rules like activation thresholds, rounding rules, cascading-cleanup invariants, mutual-relationship invariants, public-visibility invariants, and multi-tenant architecture rules.
+4. `MEMORY.md` + every memory file under `~/.claude/projects/<project>/memory/` whose `description` field hints at relevance to this feature.
+5. Existing `features/<feature>/brief.md` (when re-authoring an existing brief) + `features/<feature>/decisions.md` (every dated entry; brief-layer decisions live there). When re-authoring, the current brief content is a carry-forward constraint. A mid-cycle `Status: needs-user-input` brief is resolved by the session agent applying blocker resolutions directly, not by re-running this skill.
 
 After reading, build an "invariants ledger" — a short list of facts the brief MUST honor. Examples for this project:
-- "No non-Latin-script person names" (`feedback_*` memory)
+- "No malformed entries in user-facing records" (per your project's conventions)
 - "No existing users yet" (`MEMORY.md`)
-- "App is a social-media ranking app for movies/TV/books — expanding to more categories" (CLAUDE.md)
+- "App is a project-management tool for teams — expanding to more workspace types" (CLAUDE.md)
 - "Linking has to be right or not done at all; correctness over coverage" (existing brief patterns)
 
 The ledger is the prosecution target for the Self-prosecution stage's product persona.
@@ -161,7 +166,7 @@ Mirror this section template (matches the shape of existing briefs in the repo):
 
 ## Problem
 
-<One or more paragraphs. State the user-visible failure mode this feature exists to fix. Quantify cohorts where possible (the "~400-450 prolific authors" pattern). Tie to spec.md sections that already named the problem.>
+<One or more paragraphs. State the user-visible failure mode this feature exists to fix. Quantify cohorts where possible (the "~400-450 high-volume accounts" pattern). Tie to spec.md sections that already named the problem.>
 
 ## Solution
 
@@ -169,13 +174,27 @@ Mirror this section template (matches the shape of existing briefs in the repo):
 
 ## Goals
 
-- **<Goal name>.** <Verifiable success criterion. Each Goal is something a downstream chunk can claim "Verified by" against.>
+- **<Goal name>.** <Observable outcome, with the domain it ranges over named explicitly.>
+  **Measured by:** <the check that answers "did this ship whole?" — a query, a named test, a gate, a counted set.>
 - ...
 
-## Non-goals
+## Scope
 
-- **<Non-goal>.** <Why this isn't being done. Explicit, not implied. Each Non-goal is a bound to scope creep.>
-- ...
+### In scope
+
+- <what this feature delivers; each item testable against a Goal>
+
+### Intentionally deferred
+
+- <item> — <destination: `#NNN` or a follow-on feature slug>
+
+### Not in scope (this release)
+
+- <outside this commitment, no committed future ship, still a candidate>
+
+### Not planned
+
+- <decided against> — <why>
 
 ## User-facing changes
 
@@ -188,8 +207,18 @@ None. | <list of unresolved questions in question form, NOT statements>
 
 ### Drafting rules
 
-- **Each Goal is verifiable.** "Disambiguation primitive shared across the codebase" is verifiable; "great UX" is not. The Goal's verifiability is the foundation for the engineering plan's `Verified by` column.
-- **Each Non-goal is real, not aspirational.** "No paid tier" is a real Non-goal if the feature could plausibly include one. "No ML-driven recommendation" is a real Non-goal if the feature could plausibly include it. Don't pad with implausible Non-goals.
+- **Each Goal is verifiable, and says how.** "Disambiguation primitive shared across the codebase" is verifiable; "great UX" is not. The Goal's verifiability is the foundation for the engineering plan's `Verified by` column.
+- **Each Goal carries a `Measured by:` clause.** The check that answers *"did this ship whole?"* — a query, a named test, a CI gate, a counted set. It names the **check**, not the chunk; the engineering plan's Brief-mapping table already has a `Verified by` column for the chunk that ships the proof. A Goal whose completeness cannot be checked is one whose narrowing cannot be caught, and that narrowing is this project's most-repeated failure. `/plan-lint` warns on a Goal with no clause.
+  The project is pre-launch with no users, so adoption-percentage thresholds ("30% of users…") are unfalsifiable and banned. The threshold that works here is a **domain plus a check**: "every profile page reachable from search", "0 rows fail this query", "p95 under the budget".
+- **Each Goal states an outcome, not a mechanism.** A Goal names what the user (or the data, or the system) observably ends up with — never the technique that gets there. "Junk can't silently return at any surface a user reaches" is an outcome; "junk is kept out using an allowlist/ML approach" is a mechanism. Mechanism-phrased Goals ("using/via X", "an allowlist/ML approach", "a dedupe step", "an LLM pass") are satisfiable by performing the technique *somewhere*, which lets the engineering plan partition one technique onto one surface and another onto another while the user-visible outcome ships nowhere whole. If a Goal names a technique, rewrite it as the observable result; the technique belongs in the engineering plan. This is the *durable* fix, and it is load-bearing: the engineering-plan layer's Scope-fidelity Adversary is defeated by a mechanism-phrased Goal — a reader taking "allowlist/ML approach" literally acquits a plan that ran the allowlist on one surface and the ML on another. The downstream parity check only becomes reliable once the Goal is an outcome; do not rely on the reviewer to catch what an outcome-phrased Goal would have prevented here.
+- **Name the domain when a Goal quantifies over one.** When a Goal carries a quantifier — "every", "across the catalog", "all", "any", "going forward", "at every surface" — state the concrete domain it ranges over: which surfaces (search, profile pages, ingestion, live read-render), which content types, which call paths (live + offline, read + write), which cohorts. "Tagging is restored across the catalog (items *and* collections)" beats "tagging is restored across the catalog." The named domain is what the engineering plan's outcome-scope-parity check measures chunk coverage against (per `_review-common/principles.md` § Outcome-scope parity); an unnamed domain cannot be checked, so a subset delivery ships silently.
+- **Each scope exclusion is real, not aspirational.** "No paid tier" belongs in a bucket if the feature could plausibly include one. Don't pad any bucket with implausible entries.
+- **Scope has four buckets, and the bucket is a claim.** A single Non-goals list collapses committed-later, not-this-release, and decided-against into one shape, and the downstream scope adversary then has to re-derive which is which — it guesses, and it guesses charitably. Sort each exclusion deliberately:
+  - *Intentionally deferred* is a promise. **Every item names a destination** — a GitHub issue number or a follow-on feature slug. `/plan-lint` FAILs an undestined deferral, because it is indistinguishable from a silent narrowing. If you cannot name where the work goes, it is not deferred.
+  - *Not in scope (this release)* is "no committed future ship, still a candidate."
+  - *Not planned* is a decision, and it states its reason.
+  The payoff is downstream: a narrowing that lands in *Intentionally deferred* with a destination **is** an approved cut, and the Scope-fidelity Adversary treats it as legitimate rather than flagging it. Sorting carefully here buys quieter reviews later.
+- **Migrating an older brief.** A brief on the bare `## Non-goals` shape converts to `## Scope` only when you are already rewriting it. Sorting settled items into buckets is a product call per item, not a transformation — if the right bucket for an item isn't obvious from the brief or `decisions.md`, that's an `OPEN_QUESTION`, not a guess.
 - **Open questions are questions.** "How do we handle X?" is an open question. "We need to figure out X" is a statement and should be either a Goal (if it's required to ship) or a Non-goal (if it's deferred).
 - **Mirror existing briefs in the same feature family.** Read `features/*/brief.md` and copy section ordering, tone, and density. Do not invent a new brief shape.
 - **No persona-attribution headers.** The brief is one document with one voice (per `_review-common/principles.md` plan-style rules).
@@ -203,8 +232,8 @@ None. | <list of unresolved questions in question form, NOT statements>
 Apply `_author-common/ground-truth-protocol.md`. At the brief layer, the dominant claim classes are:
 
 - **V4 (Cross-document)** — every reference to spec.md, category-spec, project memory, decisions.md, or CLAUDE.md.
-- **V5 (External-API)** — claims about what TMDB / Open Library / Google Books / Anthropic SDK *can do at the API level* (not implementation detail). Verify against the project's wrapper code.
-- **V3 (Constraint)** — claims about cohort counts ("~400-450 prolific authors"), database state ("~841 already-pre-hydrated film/TV Persons"). Verify against the most recent migration / seed data / database query the project supports.
+- **V5 (External-API)** — claims about what an upstream API or an LLM API *can do at the API level* (not implementation detail). Verify against the project's wrapper code.
+- **V3 (Constraint)** — claims about cohort counts ("~400-450 high-volume accounts"), database state ("~841 already-synced records"). Verify against the most recent migration / seed data / database query the project supports.
 
 V1 (path:line) and V2 (identifier) claims are RARE at the brief layer. If the draft has them, the brief has drifted into engineering-plan territory — file as a self-prosecution finding (drift class).
 
@@ -220,6 +249,8 @@ Spawn two persona agents in parallel using the template in `_author-common/self-
 - **ai-development** — prosecutes plan-quality at the brief layer (verifiability of Goals, banned patterns, drift toward engineering-plan detail).
 
 Active critical pairs: universal pairs from `_review-common/critical-pairs.md` only. PR/chunk/engineering-plan-specific pairs do not apply at the brief layer.
+
+**Goal-cohesion check (Feature-surface gate).** Alongside the persona batch, run the trigger filter from `~/.claude/skills/_review-common/feature-surface-gate.md` § Goal-cohesion check (≥ 4 Goals, OR ≥ 3 distinct surfaces in Goals, OR ≥ 3 product areas in User-facing changes). At-risk → spawn the Goal-cohesion Adversary (`model: "sonnet"`, isolated, in the same parallel message as the personas) with the halved-feature mandate from the gate file. A reported partition files `BRIEF_SCOPE_BUNDLE` (HIGH) → partial-draft with the split proposal rendered per the gate file's § Split proposal; suppressed only by a bound size-acceptance row per § Acceptance. Record `goal_cohesion: not_at_risk | cohesive | bundle` in the sidecar either way.
 
 After consolidation, run post-fix premise verification on any orchestrator-rewritten prose. Classify residuals.
 
@@ -268,9 +299,9 @@ After consolidation, run post-fix premise verification on any orchestrator-rewri
 - **DRAFT_EMITTED** when authoring mode is `--draft`. By construction the Ground-truth audit and Self-prosecution stages are skipped, so APPROVED/NEEDS_USER_INPUT cannot be determined; the user has explicitly opted out of the safety net.
 
 Disk-write semantics:
-- **APPROVED** → write `features/<feature>/brief.md` with NO `Status:` frontmatter (the binary-Status convention reserves `Status:` for the mid-cycle signal only); persist sidecar; print verdict. If the prior on-disk file had `Status: needs-user-input` from a previous invocation, this emission removes that line along with the `## Pending blockers` section.
-- **NEEDS_USER_INPUT** → write `features/<feature>/brief.md` with frontmatter `Status: needs-user-input` AND an inline `## Pending blockers` section listing each unresolved finding verbatim from the verdict; persist sidecar with `verdict: "NEEDS_USER_INPUT"`; print verdict including the unresolved blockers. The next `--rewrite` invocation reads the partially-improved draft as warm-mode source-of-truth (re-generation cost is paid once, not on every iteration). Downstream skills (`/engineering-plan-author`, `/engineering-plan-review-v2`, `/brief-review-v2`) hard-refuse against `Status: needs-user-input` briefs — the upstream is mid-cycle by design.
-- **DRAFT_EMITTED** → write `features/<feature>/brief.md` with NO `Status:` frontmatter; persist sidecar with `verdict: "DRAFT_EMITTED"` AND `authoring_mode: "draft"` (the load-bearing draft signal); print verdict noting the draft is hardened-pending and instructing the user to re-invoke without `--draft` once the prose stabilizes. Reviewer skills consult the sidecar's `authoring_mode` field to detect draft mode and warn in their verdicts; `/execute-plan` consults it and refuses (implementing a draft plan ships hallucinations).
+- **APPROVED** → write `features/<feature>/brief.md` with NO `Status:` frontmatter (the binary-Status convention reserves `Status:` for the mid-cycle signal only); persist sidecar; print verdict. If the on-disk file still carries `Status: needs-user-input` and a `## Pending blockers` section, this emission removes that line along with the section. **Next step:** run `/brief-review-v2` to prosecute the draft.
+- **NEEDS_USER_INPUT** → write `features/<feature>/brief.md` with frontmatter `Status: needs-user-input` AND an inline `## Pending blockers` section listing each unresolved finding verbatim from the verdict; persist sidecar with `verdict: "NEEDS_USER_INPUT"`; print verdict including the unresolved blockers. The session agent then applies your blocker resolutions directly to `brief.md` and removes the `Status:` line + `## Pending blockers` section once the blockers clear — the author is not re-invoked. Downstream skills (`/engineering-plan-author`, `/engineering-plan-review-v2`, `/brief-review-v2`) hard-refuse against `Status: needs-user-input` briefs — the upstream is mid-cycle by design.
+- **DRAFT_EMITTED** → write `features/<feature>/brief.md` with NO `Status:` frontmatter; persist sidecar with `verdict: "DRAFT_EMITTED"` AND `authoring_mode: "draft"` (the load-bearing draft signal); print verdict noting the draft is unhardened by choice (`--draft` skipped Ground-truth audit and Self-prosecution). Reviewer skills consult the sidecar's `authoring_mode` field to detect draft mode and warn in their verdicts; `/execute-plan` consults it and refuses (implementing a draft plan ships hallucinations).
 
 ### Pending-blockers section (NEEDS_USER_INPUT mode)
 
@@ -282,26 +313,28 @@ On NEEDS_USER_INPUT, the on-disk brief gets two additions beyond the partial dra
    ```markdown
    ## Pending blockers
 
-   <!-- This section is auto-managed by /brief-author. Resolve each blocker below, then re-invoke `/brief-author --rewrite <feature>`. The next Draft stage reads this file as warm-mode source-of-truth and only re-emits prose affected by your resolutions; the unaffected sections stay byte-stable. Downstream skills (`/engineering-plan-author`, `/engineering-plan-review-v2`) refuse to run against this brief until it lands at APPROVED. -->
+   <!-- This section is auto-managed by /brief-author. Resolve each blocker below; the session agent then applies your resolutions directly to this file and removes this section along with the `Status: needs-user-input` line — the author skill is not re-run. Downstream skills (`/engineering-plan-author`, `/engineering-plan-review-v2`) refuse to run against this brief until the blockers clear. -->
 
    - [<BLOCKER_CLASS>] <span / section> — <one-line summary>; <actionable resolution path>.
    - ...
    ```
 
-On the subsequent `--rewrite` invocation that lands at APPROVED, the entire `## Pending blockers` section AND its HTML comment are removed, AND the `Status: needs-user-input` line is removed (the APPROVED emission convention is no `Status:` field). If the next invocation is still NEEDS_USER_INPUT, the `## Pending blockers` section is rewritten with the new blocker set (replaced, not appended to — stale blockers don't accumulate); the `Status: needs-user-input` line stays.
+Once the session agent has applied every resolution, it removes the entire `## Pending blockers` section AND its HTML comment, AND the `Status: needs-user-input` line (a resolved brief carries no `Status:` field). While any blocker remains unresolved, the `## Pending blockers` section keeps only the still-open blockers (resolved ones drop out as they land — stale blockers don't accumulate) and the `Status: needs-user-input` line stays.
 
 ---
 
 ## Hard rules
 
 - **Stage order is fixed.** Source ingest before Draft. Ground-truth audit before Self-prosecution and emission. No stage can be skipped except Ground-truth audit and Self-prosecution in `--draft` mode.
-- **In `ship` mode, the draft is written to disk after Self-prosecution and emission closes regardless of verdict; the on-disk frontmatter `Status:` field gates downstream skills via the binary mid-cycle convention.** APPROVED writes with NO `Status:` field (downstream skills consume the brief normally). NEEDS_USER_INPUT writes the partially-improved draft with `Status: needs-user-input` and an inline `## Pending blockers` section — downstream skills (`/brief-review-v2`, `/engineering-plan-author`, `/engineering-plan-review-v2`) hard-refuse against `Status: needs-user-input` briefs because the upstream is mid-cycle by design; the next `--rewrite` invocation reads the partial draft as warm-mode source-of-truth and only re-emits sections affected by the user's blocker resolutions. In `--draft` mode the user has explicitly opted out of the safety net by passing the flag; the draft IS written to disk with NO `Status:` field, the sidecar records `authoring_mode: "draft"` AND `verdict: "DRAFT_EMITTED"`, and reviewers consult the sidecar to detect draft mode and warn (rather than refuse). Re-invoking without `--draft` runs Ground-truth audit and Self-prosecution against the on-disk draft to harden it.
-- **Sidecar is always written.** Even on NEEDS_USER_INPUT verdicts, the sidecar persists so the next invocation has full context. (In NEEDS_USER_INPUT, the brief on disk does not change; only the sidecar.)
+- **In `ship` mode, the draft is written to disk after Self-prosecution and emission closes regardless of verdict; the on-disk frontmatter `Status:` field gates downstream skills via the binary mid-cycle convention.** APPROVED writes with NO `Status:` field (downstream skills consume the brief normally). NEEDS_USER_INPUT writes the partially-improved draft with `Status: needs-user-input` and an inline `## Pending blockers` section — downstream skills (`/brief-review-v2`, `/engineering-plan-author`, `/engineering-plan-review-v2`) hard-refuse against `Status: needs-user-input` briefs because the upstream is mid-cycle by design; the session agent applies the user's blocker resolutions directly to the brief and clears the `Status:` line once they land — the author is not re-invoked. In `--draft` mode the user has explicitly opted out of the safety net by passing the flag; the draft IS written to disk with NO `Status:` field, the sidecar records `authoring_mode: "draft"` AND `verdict: "DRAFT_EMITTED"`, and reviewers consult the sidecar to detect draft mode and warn (rather than refuse). Authoring without `--draft` runs Ground-truth audit and Self-prosecution to produce a hardened draft; the author is not re-run to harden an existing `--draft` artifact.
+- **Sidecar is always written.** Even on NEEDS_USER_INPUT verdicts, the sidecar persists so downstream skills and any later clean-slate re-author have full context.
 - **Banned content categories** (per `_review-common/principles.md` plan style rules + `_author-common/principles.md` banned authoring rationalizations):
   - Addendum sections, review attribution, historical comparison, persona-attribution headers, conflict-resolution metadata.
   - "Should exist" / "probably exists" / "the spec implies" without a verbatim quote.
-  - Goal/Non-goal pairs that contradict each other or contradict spec.md.
+  - Goal/scope-exclusion pairs that contradict each other or contradict spec.md.
   - Cohort counts without a verifiable source.
+  - Goals with no `Measured by:` clause, or with a quantifier whose domain is unnamed.
+  - `Intentionally deferred` items with no destination.
 - **Carry-forward respect.** Warm mode: a brief edit that re-introduces a Goal/Non-goal/user-cohort the user removed in a prior invocation is `FIX_INTRODUCED_PREMISE_INVERSION` against the brief itself. Surface to the user; do not emit.
 - **Self-prosecution is mandatory for `ship` mode.** `--draft` skips it; `ship` does not.
 - **Source ingest before draft.** A draft written without reading the upstream spec / memory / existing brief is not a brief — it's fan fiction. The Source-ingest stage is hard-blocking.
@@ -316,11 +349,11 @@ On the subsequent `--rewrite` invocation that lands at APPROVED, the entire `## 
 
 **Sidecar present, brief.md absent (someone deleted the brief):** Treat as cold start at the disk level; consult sidecar's history for what the user had previously arbitrated, but write a fresh draft. Surface in the verdict that the prior brief was deleted.
 
-**Sidecar present, brief.md present, SHA matches:** No-op invocation if `$ARGUMENTS` doesn't include `--rewrite` or new constraint; print "no changes; brief is in the last APPROVED state" and exit.
+**Sidecar present, brief.md present, SHA matches:** No-op invocation when the request adds no new constraint or instruction; print "no changes; brief is in the last APPROVED state" and exit. (A plain-language ask to rewrite or change the brief IS a new instruction and proceeds in warm mode.)
 
 **Sidecar present, brief.md present, SHA differs (manual edit):** The user's manual edit takes precedence. Reset the sidecar's `ground_truth_log` to empty; re-run from Source ingest. Carry-forward of `recently_resolved_blockers` still applies.
 
-**`--draft` mode:** Ground-truth audit and Self-prosecution are skipped. Sidecar is written with `authoring_mode: "draft"` and `verdict: "DRAFT_EMITTED"`. The brief IS written to disk with NO `Status:` frontmatter so the user can iterate on the file directly. The sidecar's `authoring_mode: "draft"` field is the load-bearing signal that downstream skills consult — `/brief-review-v2` proceeds with full prosecution but surfaces a draft warning in its verdict; `/engineering-plan-author` and `/engineering-plan-review-v2` warn-not-block when the upstream brief's sidecar reports draft mode. The verdict prose surfaces the hardening-pending state and instructs the user to re-invoke without `--draft` once the prose stabilizes.
+**`--draft` mode:** Ground-truth audit and Self-prosecution are skipped. Sidecar is written with `authoring_mode: "draft"` and `verdict: "DRAFT_EMITTED"`. The brief IS written to disk with NO `Status:` frontmatter so the user can iterate on the file directly. The sidecar's `authoring_mode: "draft"` field is the load-bearing signal that downstream skills consult — `/brief-review-v2` proceeds with full prosecution but surfaces a draft warning in its verdict; `/engineering-plan-author` and `/engineering-plan-review-v2` warn-not-block when the upstream brief's sidecar reports draft mode. The verdict prose surfaces the unhardened-by-choice state (`--draft` skipped Ground-truth audit and Self-prosecution).
 
 **Engineering-plan-review state has BRIEF_AMENDMENT_NEEDED unresolved:** Warm-mode carry-forward surfaces this; the brief author MUST address the amendment in the new draft, not just touch surrounding prose. If the amendment isn't addressable from this skill's vantage (requires user decision), surface as `OPEN_QUESTION`.
 
@@ -332,8 +365,9 @@ On the subsequent `--rewrite` invocation that lands at APPROVED, the entire `## 
 
 ## Relationship to sister skills
 
+- **`/brief-review-v2`** prosecutes the brief written here and consults this skill's sidecar to skip re-prosecuting author-arbitrated claims. It is the immediate next step after this author's first clean draft.
 - **`/engineering-plan-author`** consumes the brief written here. The engineering-plan-author's Source-ingest stage reads `features/<feature>/brief.md` and the brief-author's sidecar (introduced_identifiers, authoring_residual). The engineering-plan-author's product-persona prosecution sub-pass cross-checks the engineering plan's chunks against the brief Goals.
 - **`/plan-author`** indirectly consumes the brief (via the engineering plan). Brief edits cascade through the engineering-plan-review's BRIEF_AMENDMENT_NEEDED class.
-- **`/engineering-plan-review-v2`** prosecutes the brief at the engineering-plan layer (premise interrogation §brief-environment sub-pass). Findings raised there belong upstream — feeding back into the next `/brief-author` invocation's State-load stage via the warm-mode carry-forward.
+- **`/engineering-plan-review-v2`** prosecutes the brief at the engineering-plan layer (premise interrogation §brief-environment sub-pass). Findings raised there belong upstream — the session agent applies them to `brief.md` directly; a later clean-slate re-author still respects them via the state file's carry-forward.
 
 The brief is the highest-leverage artifact; this skill exists to make it the cleanest.

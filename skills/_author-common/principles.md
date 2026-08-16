@@ -57,7 +57,7 @@ These resolve oscillation hazards between authoring rules. The hosting skill app
 
 A draft that mixes the two — invents an anchor *into* existing code by hand-waving — is the failure mode `/plan-review-v2` keeps prosecuting. Author with the boundary explicit.
 
-**A-DRAFT-vs-SHIP — quick exploration vs emit-ready.** A first cold draft to capture shape (no upstream artifacts yet finalized) MAY skip the ground-truth pass; the user invokes the skill again with `--ground-truth` to harden the draft. Once the draft is committed for review, ground-truth has run. A draft emitted without ground-truth is marked in the sidecar state file (`authoring_mode: "draft"` vs `"ship"`); the reviewer reads this and adjusts its expectations.
+**A-DRAFT-vs-SHIP — quick exploration vs emit-ready.** A quick `--draft` run to capture shape (no upstream artifacts yet finalized) MAY skip the ground-truth pass; authoring without `--draft` runs the pass and produces a hardened draft. A draft emitted without ground-truth is marked in the sidecar state file (`authoring_mode: "draft"` vs `"ship"`); the reviewer reads this, warns rather than refuses, and adjusts its expectations. A `--draft` artifact is unhardened by choice — the author is not re-run to harden it.
 
 **A-INTRODUCE-vs-RELOCATE — chunk introduces a primitive vs reads it.** If the chunk introduces a constant / helper / type, the draft says so explicitly under §Owns or §Contracts. If a sibling chunk introduces it, the draft references the sibling slug and the sibling's §Owns; the draft does NOT also describe the introduction (DRY across chunks). Cross-chunk relocation triggers (e.g., "first chunk to land owns the diff") are bound in the engineering plan's decisions-closure, not duplicated per chunk.
 

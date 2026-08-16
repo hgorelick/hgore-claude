@@ -1,6 +1,6 @@
 ---
 name: explain-blockers
-description: Triage the open blockers from the most recent /plan-review-v2, /engineering-plan-review-v2, /review-pr-v2 verdict OR from the most recent /brief-author, /engineering-plan-author, /plan-author verdict into a short, ordered list of decisions for the user. Groups linked blockers under the single underlying decision that resolves them; orders decisions by dependency (top decisions unblock the ones below). Per decision: one-line question, the choices, Claude's pick with brief reasoning, which other items collapse with the call. Aggressively concise — no effort estimates, no exposition, no per-blocker walkthrough. Audience is the *director* who told Claude what to build; file paths, line numbers, and review-machinery jargon stay out of the rendered output. Read-only — never edits the plan, code, PR, or state file. Reads blockers from the v2 review state-file cache (`~/.claude/cache/review-state/<slug>.json`) AND the author state-file cache (`~/.claude/cache/author-state/<slug>.json`); also accepts a state-file path, a PR reference, or pasted verdict text. Runs inline in the main conversation thread (no subagents). Use after a v2 review or author skill returns NEEDS USER INPUT (or APPROVED with cross-chunk decisions undecided) when you want a fast, ordered triage of what to decide.
+description: Triages the open blockers from a review or author verdict into a short, ordered list of decisions for you to make — linked blockers collapsed into one call, ordered so the top decision unblocks the ones below, written in plain language with Claude's pick on each. Use when a skill returns NEEDS USER INPUT. Sister to `/solve-blockers`, which researches the answers instead.
 user-invocable: true
 ---
 
@@ -14,7 +14,7 @@ This skill is a **triage**, not a per-blocker briefing. The output is a short or
 
 Aggressive concision is a feature: each decision should fit in roughly five short lines. No effort estimates, no expository "Why it matters" paragraph, no labeled multi-bullet option structure, no per-blocker section per blocker. If something doesn't help the user pick faster, it doesn't go in. File paths, line numbers, identifier names, and other code-level shrapnel stay in Claude's working notes — out of the rendered report — except where they're load-bearing for the decision (e.g., naming an external library, a feature the user named themselves, or a concept they used in their own instructions).
 
-The skill is **read-only by construction**: it researches, explains, and recommends; it never edits the plan, the code, the PR, or any state file. Blockers labeled `STABLE_DISAGREEMENT`, `OPEN_QUESTION`, `BRIEF_AMENDMENT_NEEDED`, `IMPLEMENTABILITY_GAP`, `UNCORROBORATED_RESET`, etc. are by construction the items the v2 machinery refused to auto-resolve — pre-empting that adjudication here would re-introduce the very "orchestrator decided for the user" failure mode the v2 skills are engineered to prevent.
+The skill's **triage is read-only**: it researches, clusters, and recommends without touching the plan, the code, the PR, or any state file. Only *after* the decision list is rendered does it ask the operator whether to apply Claude's picks or hand off to `/solve-blockers` — editing happens solely on that explicit say-so, and state files stay read-only throughout. Blockers labeled `STABLE_DISAGREEMENT`, `OPEN_QUESTION`, `BRIEF_AMENDMENT_NEEDED`, `IMPLEMENTABILITY_GAP`, `UNCORROBORATED_RESET`, etc. are by construction the items the v2 machinery refused to auto-resolve — so during triage, pre-empting that adjudication would re-introduce the very "orchestrator decided for the user" failure mode the v2 skills are engineered to prevent; the apply step happens only when the operator chooses it.
 
 The skill runs **in the main conversation thread** — no subagents. Blocker counts are small (typically 1–10), each blocker's research is a handful of Read / grep calls, and inline execution is faster than spawning agents and marshaling their reports back. Cross-blocker synthesis is free when everything is in the same context.
 
@@ -29,7 +29,7 @@ The skill runs **in the main conversation thread** — no subagents. Blocker cou
 1. **No arguments / `latest`** — list `~/.claude/cache/review-state/*.json` AND `~/.claude/cache/author-state/*.json` sorted by mtime (most-recent first across both directories). For each candidate, check `last_verdict`: skip files where the verdict is `APPROVED` (with empty `prior_blockers`) or `CLOSED` (engineering-plan only — also empty `prior_blockers`). For author-state engineering-plan files, `APPROVED` may legitimately have `IMPLEMENTABILITY_GAP` entries in `prior_blockers` — those DO need triage, so don't skip APPROVED unconditionally; check whether `prior_blockers` is empty. Pick the first remaining candidate. If two or more candidates were modified within the same hour, surface the candidate list and ask the user which to target — state files persist across rounds (review-side) and across authoring invocations (author-side), so the most recently *touched* file is not always the one the user means.
 2. **Slug** — bare token matching `~/.claude/cache/review-state/<slug>.json` OR `~/.claude/cache/author-state/<slug>.json`. Check review-state first, then author-state. If both exist for the same slug (e.g., the user has authored AND reviewed the same engineering plan — common pattern), and both have unresolved blockers, ask the user which they meant; reviewer-side and author-side blockers are not necessarily the same set.
 3. **State-file path** — absolute or `~`-relative path to a JSON state file. Load directly. The path's parent directory tells you which side it's from (`review-state` vs `author-state`).
-4. **Author-side artifact reference** — `brief <feature>` resolves to `~/.claude/cache/author-state/<feature>__brief.json`; `eng-plan <feature>` resolves to `<feature>__engineering-plan.json`; `chunk <feature>/<chunk-slug>` resolves to `<feature>__<chunk-slug>.json`. These shortcuts let the user reference a specific authoring artifact without typing the full slug pattern.
+4. **Author-side artifact reference** — `brief <feature>` resolves to `~/.claude/cache/author-state/<feature>__brief.json`; `eng-plan <feature>` to `<feature>__engineering-plan.json`; `chunk <feature>/<chunk-slug>` to `<feature>__<chunk-slug>.json`. These shortcuts let the user reference a specific authoring artifact without typing the full slug pattern. For a **tracked** feature (engineering plans under `features/<feature>/plans/<track>/` — see `~/.claude/skills/_plan-common/layout.md`), the track is a slug segment: `eng-plan <feature>/<track>` → `<feature>__<track>__engineering-plan.json`, `chunk <feature>/<track>/<chunk-slug>` → `<feature>__<track>__<chunk-slug>.json`. A bare `eng-plan <feature>` against a tracked feature matches more than one state file — list them and ask which.
 5. **PR reference** — `pr <N>`, `pr #<N>`, `#<N>`, or `<owner>/<repo>#<N>`. Resolve via `gh pr view <N> --json reviews --jq '.reviews[] | select(.body | startswith("## Tribunal v2 — Verdict:"))'` to pull v2 verdict review comments (these are posted by `gh pr review --comment`, not as plain issue comments — `gh pr view --comments` would miss them). Take the most recent. Parse the `### Blockers` section for class + body lines. (PR-source blockers come only from `/review-pr-v2` — author skills don't post to PRs.)
 6. **Pasted verdict text** — raw markdown containing `## Tribunal v2 — Verdict:` (PR), `### Plan Status:` (plan reviews), or `# <Brief|Chunk plan|Engineering plan> authoring verdict —` (author skills). Parse blocker lines from the `### Blockers` block.
 
@@ -46,10 +46,10 @@ Research, cluster, triage       (inline, main thread)
    ↓ research each blocker enough to know what call resolves it,
    ↓ then cluster blockers under shared decisions, then order decisions
    ↓ by dependency
-Render decision list and save   (short output, top-down ordered)
+Render list, then apply or hand off  (short output, top-down ordered)
 ```
 
-There is no inner loop and no re-invocation of the v2 skills. The user reads the decision list, makes the calls, applies edits themselves; their next `/plan-review-v2` / `/engineering-plan-review-v2` / `/review-pr-v2` invocation picks up the resolutions through that skill's round-memory machinery.
+There is no inner loop and no re-invocation of the v2 skills. After the decision list renders, the operator chooses whether Claude applies the picks or hands off to `/solve-blockers`; either way, the next `/plan-review-v2` / `/engineering-plan-review-v2` / `/review-pr-v2` invocation picks up the resolutions through that skill's round-memory machinery.
 
 ---
 
@@ -67,7 +67,7 @@ Resolve `$ARGUMENTS` to one of three sources. The first is preferred when availa
 
 If neither holds, surface the verdict status and the empty/closed blocker list back to the user, and stop. Do not invent work for a CLOSED plan or a clean APPROVED.
 
-**DRAFT_EMITTED verdicts** (author-side only) do NOT have triage-worthy blockers — the author skill skipped its hardening stages (Plan-lint, Concern-lint where applicable, Ground-truth audit, Self-prosecution) because the user passed `--draft`. There are no findings, but there is also no APPROVED status. Surface this explicitly: "Verdict is `DRAFT_EMITTED` — the user opted out of the safety net by passing `--draft`. Re-invoke `/<author-skill> --rewrite <feature>` without `--draft` to run ground-truth and self-prosecution, then triage the resulting blockers." Do NOT proceed to research — there is nothing to research.
+**DRAFT_EMITTED verdicts** (author-side only) do NOT have triage-worthy blockers — the author skill skipped its hardening stages (Plan-lint, Concern-lint where applicable, Ground-truth audit, Self-prosecution) because the user passed `--draft`. There are no findings, but there is also no APPROVED status. Surface this explicitly: "Verdict is `DRAFT_EMITTED` — the user opted out of the safety net by passing `--draft`. Re-invoke `/<author-skill> <feature>` without `--draft` to run ground-truth and self-prosecution, then triage the resulting blockers." Do NOT proceed to research — there is nothing to research.
 
 Build a normalized array (one entry per blocker):
 
@@ -91,9 +91,9 @@ blockers: [
 ```
 
 Determine `artifact_kind` from the source-file shape:
-- Author-state slug ending in `__brief` (e.g., `author-tmdb-hydration__brief.json`) → `brief`.
+- Author-state slug ending in `__brief` (e.g., `user-profile-sync__brief.json`) → `brief`.
 - `plan_path` / `artifact_path` ending in `engineering-plan.md`, OR author-state slug ending in `__engineering-plan` → `engineering_plan`.
-- `plan_path` / `artifact_path` ending in `implementation/<chunk-slug>.md` (or similar per-chunk file), OR author-state slug containing `<feature>__<chunk-slug>` (with neither `__brief` nor `__engineering-plan` suffix) → `chunk_plan`.
+- `plan_path` / `artifact_path` ending in `implementation/<chunk-slug>.md` or `implementation/<NN>-<chunk-slug>.md` (or similar per-chunk file; strip any leading `NN-` creation-index prefix when extracting the slug), OR author-state slug of the form `<feature>__<chunk-slug>` / `<feature>__<track>__<chunk-slug>` (with neither `__brief` nor `__engineering-plan` suffix) → `chunk_plan`.
 - State-file slug containing `__pr-<N>` or no `plan_path` field → `pr_diff`.
 
 Determine `state_side` from the source state file's parent directory:
@@ -146,6 +146,7 @@ For each blocker:
 
    - **`BRIEF_AMENDMENT_NEEDED`** (engineering-plan only) — the plan body decides something the brief should decide. Read the brief. Either (a) propose the brief amendment that closes the gap, or (b) identify which chunk should be dropped because no brief Goal supports it. Do **not** propose putting brief-level decisions in the plan body — that is the failure mode being prosecuted.
 
+   - **`REPO_PREMISE_GAP`** (engineering-plan + chunk-plan) — the Repo Reality Sweep read the shipped code and the plan's premise about it did not survive. **Open the cited code yourself before triaging** — this class is the one whose blocker text is worth least second-hand, because the finding IS the code. Identify which axis fired: incumbent divergence (the plan drops something the shipped code does), caller closure (an existing caller is unaccounted for), or dependency guarantee (a primitive guarantees less than the plan's use assumes, at the plan's scale). The first two are usually a stated fix — the user's call is confirm-or-override, and the option list is short. The third is a genuine director decision with three shapes: strengthen the use, narrow the population, or disclose the shortfall. For that one, **get the blast radius as a number before presenting it** — a read-only query or grep usually settles it, and "3,354 of 7,128" versus "some" changes which option the user picks. Whatever the axis, before proposing a remedy that adds a check, filter, or fallback, grep for whether the repo already implements it; proposing a redefinition of something that ships adjacent is this class's characteristic mistake.
    - **`IMPLEMENTABILITY_GAP`** (engineering-plan only) — a cross-chunk-wiring decision is undecided OR an identifier needed by ≥2 chunks is unbound. Identify the decision / identifier. Propose a binding (the actual signature, name, ownership) and name which chunk should own it.
 
    - **`UNCORROBORATED_RESET`** (engineering-plan only) — single-persona RESET claim, escalated to CRITICAL HARD by the corroboration rule. The persona believes the plan's premise is broken at the repo-state or brief-environment layer. Read the claim verbatim. Verify against repo / project memory / `CLAUDE.md`. If verification corroborates, the user should re-scope; if it does not, recommend dismissal with a one-sentence rationale.
@@ -213,7 +214,7 @@ Each decision is a self-contained block. Aim for ~5 short lines including blank 
 ```
 ### Decision [N]: [one-line question, phrased as a choice]
 
-**Options:** [Option A — one short clause]; [Option B — one short clause]. (Or "Single call: [one short clause]" if there's no real second option.)
+**Options:** [Option A — one short clause]; [Option B — one short clause]. Every rendered decision carries a genuine choice — if there is no real second option, it is NOT a decision block; it goes in the auto-fix set (see "Single-call items — fix, don't raise" below).
 
 **My pick:** [one option, one or two sentences of reasoning. Lead with the user's stake — what the call commits them to — not the implementation reason. Name the cost in one clause if it's real.]
 
@@ -221,6 +222,8 @@ Each decision is a self-contained block. Aim for ~5 short lines including blank 
 ```
 
 For retraction-candidate blockers (premise FALSE/STALE such that the blocker no longer holds), don't make them their own decision. Group them at the end under a single "Items the situation has moved past" decision; the user's "call" there is just to re-run the source review after the live decisions are made.
+
+**Single-call items — fix, don't raise.** A blocker whose resolution has no real director choice — one viable fix, where the user's only "call" would be to rubber-stamp Claude's obvious pick — does NOT get a decision block and is NOT raised as a decision. Collect these into an **auto-fix set**. The director's attention is reserved for genuine choices; a determined fix is Claude's to make. Auto-fix items are surfaced only as a compact "Fixing directly (no decision needed)" list beneath the decisions, one short phrase each, and applied as part of the apply step — never numbered, never counted in the decision total. Retraction candidates and single-call items are the two kinds of item that ride the apply step without consuming a decision. Do not manufacture a fake second option to promote a single-call item into a decision — that is the padding failure mode inverted.
 
 ---
 
@@ -239,25 +242,37 @@ The header identifies the source by what the user calls it (feature name, PR tit
 ---
 
 <per-decision blocks, in dependency order, separated by blank lines>
+
+<if any single-call items:
+**Fixing directly (no decision needed):** <one short phrase per auto-fix item, comma-separated>.
+>
 ```
 
 That's it. No closing `## What I'd do next` section — the decisions are *already* ordered by what to do first. Numbering them does the job.
 
 If the entire triage is one decision, drop the count line and just emit the single block under the header.
 
-After rendering, ask the user once: *"Save this report to `~/.claude/cache/explain-blockers/<source-slug>__<timestamp>.md`?"* Default is **no** — the report is in scrollback either way; persistence is for when the user wants a clean copy to share. If they say yes:
+---
 
-1. Run `mkdir -p ~/.claude/cache/explain-blockers` (the directory may not exist; `Write` does NOT auto-create parents).
-2. `Write` the rendered report to the constructed path.
-3. Surface the absolute path back to the user.
+## After rendering — apply or hand off
 
-`<source-slug>` is the state-file basename without `.json`, or `pr-<owner>-<repo>-<N>` for PR sources, or `pasted-<timestamp>` for inline text. `<timestamp>` is `YYYYMMDD-HHMM` in UTC.
+Do **not** offer to save the report. It's already in scrollback, and the operator asked for the *calls to make*, not a file to keep. Instead, after the decision list is rendered, ask the operator once which way to take it. Use `AskUserQuestion` with two options:
+
+- **Apply my picks** — Claude makes the edits, working each decision's *My pick* in dependency order (top decision first). These are explain-blockers picks: fast triage judgment, not the ≥95%-confidence research `/solve-blockers` does — so this is the right call when the decisions are low-stakes or the picks are obvious.
+- **Run `/solve-blockers`** — hand off for deeper research: each blocker gets driven to ≥95% confidence with an evidence trail before anything changes. The right call when the decisions are load-bearing.
+
+There is no default — wait for the operator's answer.
+
+**When the triage produced no genuine decisions — only single-call (auto-fix) items and/or retraction candidates — skip the apply-or-handoff question entirely.** There is nothing to hand off and nothing to choose: apply the auto-fix items directly (still never touching state files), then name the source skill to re-invoke. Raising an apply-or-handoff prompt over a set of no-brainers is the same director-attention tax the single-call rule exists to remove.
+
+- If they pick **apply my picks**: make the edits for each live decision following its *My pick*, top-down, AND apply every auto-fix (single-call) item in the same pass. Only the plan / code / brief / PR change — **state files stay read-only** (`~/.claude/cache/review-state/` and `~/.claude/cache/author-state/` are owned by the source-skill machinery). Skip the retraction cluster — its "resolution" is "re-run the source skill", not an edit. When the edits land, name the source skill to re-invoke so its round-memory / carry-forward machinery validates the resolutions (`/plan-review-v2`, `/engineering-plan-review-v2`, `/review-pr-v2`, or the matching author skill).
+- If they pick **`/solve-blockers`**: invoke it via the Skill tool on the same target. It reads this rendered report from scrollback and skips its own clustering.
 
 ---
 
 ## Non-goals (explicit)
 
-- **Do not edit the plan, the code, the brief, or the PR.** The v2 review skills AND the author skills both classified these as "user must adjudicate"; pre-empting that adjudication defeats their purpose. Author-side blockers especially: a draft was withheld from disk specifically because the author skill refused to ship a hallucination — fixing it here would dump the same hallucination back to disk under a different name.
+- **Do not edit anything during triage.** The triage pass — research, cluster, recommend — is read-only. Editing happens *only* after the decision list is rendered and *only* when the operator picks "apply my picks" (see "After rendering — apply or hand off"). Never apply picks the operator declined, and never touch state files even then. Be especially deliberate applying author-side picks: a draft was withheld from disk because the author skill refused to ship a hallucination, so an approved apply writes plan/brief prose to disk — confirm the pick is right before the operator green-lights it.
 - **Do not invoke the v2 review skills OR the author skills.** This skill consumes their output. The user re-invokes the source skill themselves once they have applied resolutions.
 - **Do not modify state files.** `~/.claude/cache/review-state/*.json` is owned by the v2 round-memory machinery. `~/.claude/cache/author-state/*.json` is owned by the author skills' write-time machinery. Both directories are read-only from this skill's perspective; writing would corrupt convergence guarantees on either side.
 - **Do not relitigate the v2 classification.** If the review said `OPEN_QUESTION`, treat it as an open question — research clarifies it, it does not overturn the class. Single exception: if verification finds the blocker's *premise* is false, flag as a retraction candidate (do not silently drop, and do not propose forcing a different class).
@@ -280,8 +295,8 @@ After rendering, ask the user once: *"Save this report to `~/.claude/cache/expla
 
 This skill is a sibling, not a participant, of either the v2 round-memory machinery or the author-side carry-forward machinery. It reads state files from both `~/.claude/cache/review-state/` and `~/.claude/cache/author-state/`; it never writes either. The user's eventual resolution of blockers feeds back into the next invocation of the source skill through (a) plan/code/brief edits, (b) commit messages, (c) `decisions.md` entries, and (d) the source skill's `recently_resolved_blockers` capture priority. None of those flow through this skill.
 
-If the user asks "and now apply the fix," redirect them. This skill does not edit. They can apply the recommended path themselves, or invoke the source skill again after their edits to let it validate the resolution:
+Applying the picks (when the operator chooses that at the end) edits only the plan / code / brief / PR — never the state files. After the edits land, the resolution feeds back into the next invocation of the source skill, which validates it through its round-memory / carry-forward machinery:
 - Reviewer-side resolutions → re-invoke `/plan-review-v2`, `/engineering-plan-review-v2`, or `/review-pr-v2`.
-- Author-side resolutions → re-invoke `/brief-author`, `/engineering-plan-author`, or `/plan-author` (typically with `--rewrite`).
+- Author-side resolutions → re-invoke `/brief-author`, `/engineering-plan-author`, or `/plan-author` (warm mode is automatic when the artifact already exists).
 
 When the same artifact has BOTH a review-side state file and an author-side state file with unresolved blockers, the user should generally resolve the author-side blockers first (the author skill refuses to emit; the disk-state plan is stale until they do) and then re-run the reviewer afterwards. Surface this dependency in the report header when both sides have entries for the same artifact slug.

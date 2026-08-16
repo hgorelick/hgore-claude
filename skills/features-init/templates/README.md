@@ -17,19 +17,47 @@ features/
     engineering-plan.md              # chunk index + dependencies (the "what")
     decisions.md                     # decision log (append-only)
     implementation/
-      <chunk-slug>.md                # one file per chunk, named by slug
-      <other-chunk-slug>.md
+      01-<chunk-slug>.md             # one file per chunk; NN- = creation-order index
+      02-<other-chunk-slug>.md       # (auto-assigned by /plan-author; slug stays prefix-free)
       ...
   archive/
     <feature-name>/                  # shipped features move here once fully merged + verified
 ```
 
+**This flat layout is the default and covers almost every feature.** A feature whose delivery
+splits into independently-sequenced tracks may instead carry one engineering plan per track:
+
+```
+  <feature-name>/
+    brief.md                         # still ONE brief — feature-level
+    decisions.md                     # still ONE decision log — shared by every track
+    plans/
+      <track>/
+        engineering-plan.md
+        implementation/<NN>-<chunk-slug>.md
+      <other-track>/
+        engineering-plan.md
+        implementation/<NN>-<chunk-slug>.md
+```
+
+Splitting is a **director-level call**, made when one plan has grown past the point where a
+review round can converge — not something to reach for up front. The brief does **not** split
+with it: splitting delivery is a sequencing decision, splitting scope is a product decision,
+and conflating them re-litigates settled scope every time a plan gets large. Because two plans
+now trace to one brief, each plan carries a `## Goal scope` section declaring, clause by
+clause, which parts of which Goals it owns and which it leaves to a sibling — that declaration
+is what lets a reviewer tell a deliberate hand-off from a dropped clause.
+
+The skill suite resolves both layouts automatically; the normative rules (plan-root
+resolution, reference syntax, state-slug derivation) live in
+`~/.claude/skills/_plan-common/layout.md`.
+
 ### Naming
 
 - **Feature folder:** `kebab-case`, no number prefix (e.g. `streak-recovery`, not `042-streak-recovery`).
 - **Chunk slug:** `kebab-case`, 2–4 words, descriptive of the chunk's **concern** — what it does, not where it sits in the graph. Good: `schema-migration`, `wikidata-qid-backfill`, `cascade-direction-neutral`. Bad: `phase-2-cascade`, `step-3`, `chunk-01`, `01a-cascade`, `wave-2-llm`. Slugs are immutable once the engineering plan is approved — renaming breaks PR links, decision-log references, and chunk-plan filenames.
-- **Chunk file:** `<slug>.md` — exactly the slug, no number prefix, no order suffix. The slug is the stable identifier across the engineering plan, decisions log, and per-chunk plan.
-- **Why no numbers (and no `phase-N`/`step-N`/`wave-N`):** these all encode **position-in-graph** rather than concern. A chunk that grows mid-plan becomes `27a/27b/27c`; reordering forces a renumber that invalidates every external reference. `phase-2-cascade` is the same anti-pattern in disguise — once `phase-1` splits into two, the suffix is wrong. Slugs are stable: a chunk that grows splits into two new concern-named slugs (`cascade-rewrite` + `callsite-migration`), each stable on its own. If you reach for a position-encoding slug, rename it after the work it does.
+- **Chunk file:** `<NN>-<slug>.md` — the slug, prefixed on disk with a two-digit **creation-index** (`01-`, `02-`, …) that `/plan-author` assigns in authoring order so a directory listing sorts by when each plan was written. The prefix is a glance-ordering affordance only; the **slug stays the stable identifier** across the engineering plan, decisions log, sidecars, and PR branch. `/plan-author` assigns the index once and reuses it (stable for the life of the chunk); `/plan-lint` strips it before deriving the slug. (Plans authored before this convention may still be bare `<slug>.md`.)
+- **Why the slug carries no position (no `phase-N`/`step-N`/`wave-N`/`27a`):** these encode **position-in-graph** rather than concern. A chunk that grows mid-plan becomes `27a/27b/27c`; reordering forces a renumber that invalidates every external reference. `phase-2-cascade` is the same anti-pattern in disguise — once `phase-1` splits into two, the suffix is wrong. Slugs are stable: a chunk that grows splits into two new concern-named slugs (`cascade-rewrite` + `callsite-migration`), each stable on its own. If you reach for a position-encoding *slug*, rename it after the work it does. **The `<NN>-` filename prefix is different** — it records *creation order* (a historical fact that never reorders), lives only on the filename, and is stripped before the slug is derived, so it never becomes an external reference.
 
 ## The process
 
@@ -42,14 +70,14 @@ High-altitude product doc. Answers *what problem* and *why now*. No implementati
 Required sections (see `_template/brief.md`):
 - **Problem** — what's broken / missing for the user, in plain language.
 - **Solution** — the proposed shape of the fix, one paragraph.
-- **Goals** — what success looks like, in observable terms.
-- **Non-goals** — what this feature explicitly will *not* do. Kills scope creep early.
+- **Goals** — what success looks like, in observable terms. Each Goal names the domain it ranges over and carries a `Measured by:` clause — the check that proves it shipped whole.
+- **Scope** — four buckets: *In scope*, *Intentionally deferred* (every item names a destination), *Not in scope (this release)*, *Not planned*. Kills scope creep early. One flat list would collapse three states that behave differently downstream — committed-later, not-this-release, decided-against — leaving the scope check to guess which one an omission is.
 - **User-facing changes** — screens, flows, copy, or behaviors the user will notice.
 - **Open questions** — things to resolve before engineering plan.
 
 ### Stage 2 — Engineering plan (`engineering-plan.md`)
 
-**The brief is the input. The engineering plan is derived from it.** Every chunk in the plan must trace back to a goal, a user-facing change, or a non-goal-induced constraint in the brief. If a chunk doesn't serve something in the brief, either the brief is missing a goal (update it) or the chunk shouldn't exist (drop it). The engineering plan opens with a **brief mapping** section that makes this trace explicit before any chunks are listed.
+**The brief is the input. The engineering plan is derived from it.** Every chunk in the plan must trace back to a goal, a user-facing change, or a constraint induced by one of the brief's Scope exclusions. If a chunk doesn't serve something in the brief, either the brief is missing a goal (update it) or the chunk shouldn't exist (drop it). The engineering plan opens with a **brief mapping** section that makes this trace explicit before any chunks are listed.
 
 Breaks the feature into **chunks**. Each chunk = one PR. Chunks must be small enough to review in one sitting and shippable on their own (behind a flag if needed).
 
@@ -59,6 +87,7 @@ Required sections (see `_template/engineering-plan.md`), in order:
 - **Decisions closure** — cross-chunk decisions resolved at engineering-plan time, before any chunk starts. Prevents re-litigation and quiet divergence across chunks. Decisions affecting only one chunk belong in that chunk's plan, not here.
 - **Chunk index** — list of every chunk + its code deps, identified by slug. Columns are exactly `Slug | Chunk | Code deps`. Slugs are stable references for the dependency graph and per-chunk plans.
 - **Dependency graph** — explicit DAG (even if linear). States which chunks can run in parallel vs. must be sequential. `/plan-lint` enforces DAG acyclicity and resolves every dep slug against the Chunk index.
+- **Goal scope** — *tracked features only.* Declares clause by clause which parts of which brief Goals this plan owns and which belong to a sibling track. Required whenever a feature has more than one engineering plan: without it, a reviewer cannot distinguish a deliberate hand-off from a dropped clause, and a clause both plans disclaim ships nowhere while each plan reviews clean.
 - **Risks / unknowns** — anything that might force re-planning mid-feature. Technical unknowns live here, not in the brief.
 - **Rollout plan** — flags, migration order, monitoring. Where applicable.
 
@@ -82,11 +111,11 @@ Allowed in the engineering plan:
 
 **Smell test:** if you can't write the engineering-plan section without referencing the chunk's internal steps, the section belongs in the chunk plan instead — write it there, then come back and reduce the engineering-plan reference to the contract the chunk owes its neighbors.
 
-### Stage 3 — Implementation plans (`implementation/<slug>.md`)
+### Stage 3 — Implementation plans (`implementation/<NN>-<slug>.md`)
 
 **The engineering plan is the input. The chunk plan is derived from it.** Each chunk plan opens with a back-reference to its row in the engineering plan's chunk index and to the brief items it serves. If you can't restate the chunk's purpose in terms of a brief Goal or User-facing change, stop and re-read both the brief and the engineering plan.
 
-One file per chunk, named by slug (`implementation/<slug>.md` — no number prefix). Written *just before* starting that chunk, not all upfront — early chunks change the codebase and invalidate later assumptions.
+One file per chunk, named `implementation/<NN>-<slug>.md` — the slug carries the chunk's identity; the `<NN>-` creation-index prefix (auto-assigned by `/plan-author`, see Naming above) just makes the directory sort by authoring order. Written *just before* starting that chunk, not all upfront — early chunks change the codebase and invalidate later assumptions.
 
 Required sections (see `_template/chunk.md`):
 - **Goal** — one sentence: what this chunk delivers. Must not contain " and ".
@@ -97,21 +126,24 @@ Required sections (see `_template/chunk.md`):
 - **Tests to add** — unit, integration, e2e. Specific cases, not "test the thing."
 - **Acceptance criteria** — observable, testable conditions for "done." Each item must name a command, test, file+symbol, gate, or user-visible behavior — not a vague verb like "implement", "complete", or "ensure". `/plan-lint` rejects vague items.
 - **Review checklist** — what the human will eyeball before approving. Screenshots, flows to click, perf numbers, etc.
-- **Out of scope** — what this chunk will *not* touch (deferred to later chunks or non-goals).
+- **Out of scope** — what this chunk will *not* touch (deferred to later chunks, or excluded by the brief's Scope buckets).
 
 After authoring or editing any plan (engineering or chunk), run `/plan-lint <path>` before handoff. The lint is deterministic — pure parsing — and catches DAG cycles, "and"-chunks, vague exit criteria, abstraction-before-consumers, and missing Factoring Contract fields in seconds. Lint failures block handoff.
 
 ## Decision log (`decisions.md`)
 
-Append-only. Each entry: date, decision, why, alternatives rejected. Keeps us from re-litigating the same tradeoffs three weeks later.
+Append-only. Each entry: date, decision, **status**, why, alternatives rejected. Keeps us from re-litigating the same tradeoffs three weeks later. Downstream review/author/execute skills scan this file for `Status: bound` entries and treat them as authoritative — so every entry MUST carry a `Status:` line.
 
 Format:
 ```
 ## YYYY-MM-DD — <short title>
 **Decision:** <what we're doing>
+**Status:** bound | superseded by "<title>" (<date>) | obsolete
 **Why:** <reason>
 **Rejected:** <alternatives considered and why not>
 ```
+
+`bound` entries live under a `## Active (bound)` heading; when a later decision replaces one, flip the old entry to `superseded by "<new title>" (<date>)` and move it under `## Archived (superseded / obsolete)`. Only `## Active` entries bind — a stale entry left reading `bound` would silently override the wider decision that replaced it. See `_template/decisions.md` for the full two-section layout and the supersede-in-two-steps rule.
 
 ## Lifecycle
 

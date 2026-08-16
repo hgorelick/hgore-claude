@@ -1,30 +1,99 @@
 # hgore-claude
 
-A small, opinionated set of Claude Code skills, hooks, and shell helpers I use every day. Drop them into `~/.claude/` and they work anywhere Claude Code runs.
+An opinionated set of Claude Code skills, hooks, and shell helpers for a **spec-driven, review-heavy software development lifecycle**. Drop them into `~/.claude/` and they work in any repo that adopts the `features/` convention.
 
-This repo is a snapshot of the parts of my `~/.claude/` that are generic enough to share — no personal memory, no project transcripts, no machine-specific paths in the files themselves.
+The pack turns a feature from an idea into merged code through a chain of small, verifiable artifacts — each one **authored** by a skill and then **prosecuted** by an adversarial review skill before the next layer descends from it. Plans are cheap; bad plans are expensive, so the review happens at every layer, not just at the code.
+
+> This repo is a snapshot of the parts of my `~/.claude/` that are generic enough to share — no personal memory, no project transcripts, no machine-specific paths. Examples use a neutral placeholder domain; swap in your own.
+
+## The lifecycle
+
+```
+spec.md ──/spec-author──▶ /spec-review
+   │
+   ▼
+brief.md ──/brief-author──▶ /brief-review-v2      "what & why" for one feature
+   │
+   ├──/plan-alignment──▶ pick an architecture direction (recorded as a bound decision)
+   ▼
+engineering-plan.md ──/engineering-plan-author──▶ /engineering-plan-review-v2
+   │                                               the chunk DAG between brief and code
+   ▼
+implementation/<chunk>.md ──/plan-author──▶ /plan-review-v2      one chunk = one PR
+   │
+   ▼
+/execute-plan ──▶ (auto-opens the PR) ──▶ /review-pr-v2 ──▶ merge
+```
+
+Each **author** skill writes the artifact, grounding every claim against the repo and self-prosecuting before it emits. Each **review** skill convenes an adversarial tribunal of persona agents (correctness, security, architecture, testing, …) that attack the artifact, file findings with evidence, apply fixes, and return a verdict. `/plan-lint` is the deterministic structural floor the review skills assume has already passed.
 
 ## What's in here
 
 ```
 skills/
-  engineering-plan-review/SKILL.md   adversarial tribunal on a feature's engineering plan
-  open-pr/SKILL.md                   commit in logical chunks, push, open a PR into main
-  plan-review/SKILL.md               adversarial tribunal on per-chunk implementation plans
-  review-pr/SKILL.md                 adversarial tribunal on the current branch's PR
+  # Root spec
+  spec-author/  spec-review/                  the project's source-of-truth spec.md
+
+  # Feature brief — the "what & why"
+  brief-author/  brief-review-v2/
+  plan-alignment/                             choose an architecture direction, record the pick
+
+  # Engineering plan — the chunk DAG
+  engineering-plan-author/  engineering-plan-review-v2/
+
+  # Per-chunk implementation plans
+  plan-author/  plan-review-v2/
+  plan-lint/                                  deterministic structural lint (briefs, EPs, chunk plans)
+
+  # Execution & shipping
+  execute-plan/                               TDD implementation of one chunk; auto-opens its PR
+  open-pr/                                    commit in logical chunks, push, open a PR
+  review-pr-v2/                               adversarial tribunal on the branch's PR
+  cleanup-worktree/                           tear down a merged chunk's worktree
+
+  # Blocker handling & scope
+  explain-blockers/                           triage a review's blockers into decisions for you
+  solve-blockers/  solve-blockers-headless/   research each blocker to a recommended fix
+  scope-check/                                does the plan deliver each brief Goal in full?
+  contract-review/                            cross-artifact contract consistency
+  implementation-verify/                      independent re-proof of a finished chunk
+
+  # Setup & shared internals
+  features-init/                              scaffold the features/ folder in a new project
+  _author-common/ _plan-common/               shared protocols the skills load
+  _review-common/ _spec-common/
 hooks/
-  block-banned-bash.sh               PreToolUse guard: nudge Claude to use Read/Edit/Write
-                                     instead of cat/sed/echo>file/standalone-jq
-statusline.sh                        custom status line: ctx-usage | dir | branch | model
-settings.example.json                template wiring up the hook + statusline
-CLAUDE.md.example                    the global rules the hook enforces (paste into ~/.claude/CLAUDE.md)
+  block-banned-bash.sh                        nudge Claude to Read/Edit/Write over cat/sed/echo>file
+  block-self-scheduling.sh                    ask before Claude self-invokes /open-pr, /execute-plan,
+                                              /review-pr-v2, or a scheduler
+statusline.sh                                 ctx-usage | dir | branch | model
+settings.example.json                         wires up the hooks + statusline
+CLAUDE.md.example                             the global rules the hooks enforce
 ```
 
-The skills are user-invocable as slash commands once they're under `~/.claude/skills/`. The hook is a `PreToolUse` matcher on `Bash` that returns `permissionDecision: "ask"` for banned patterns — Claude can still run them, but only after you confirm.
+## Conventions the pack assumes
+
+The skills operate on a `features/<feature>/` layout at your repo root:
+
+```
+features/<feature>/
+  brief.md                 what the feature delivers and why
+  engineering-plan.md      the chunk DAG (or plans/<track>/engineering-plan.md when large)
+  decisions.md             the durable arbitration log
+  implementation/<NN>-<chunk-slug>.md   one per-chunk plan; one chunk = one PR
+```
+
+Plus a project root that carries:
+
+- `spec.md` — the product source of truth (business rules, formulas).
+- `personas/*.md` — the reviewer lenses (`architecture.md`, `security.md`, `testing.md`, …). The review skills load these; **they must exist at your repo root** or the review stops rather than run under-calibrated.
+- `CLAUDE.md` — your global rules (the hooks are guard rails for the rules in `CLAUDE.md.example`).
+
+Run `/features-init` to scaffold the `features/` folder and its templates in a new project.
 
 ## Install
 
-Two options. Symlinking is recommended — pulling new commits then updates your live setup with no extra step.
+Symlinking is recommended — `git pull` then updates your live setup with no extra step.
 
 ### Option 1: Symlink (recommended)
 
@@ -32,16 +101,14 @@ Two options. Symlinking is recommended — pulling new commits then updates your
 git clone https://github.com/hgorelick/hgore-claude.git ~/src/hgore-claude
 cd ~/.claude
 
-# Skills (each skill is its own dir at ~/.claude/skills/<name>/SKILL.md)
+# Skills — link the whole directory
 mkdir -p skills
-ln -s ~/src/hgore-claude/skills/engineering-plan-review skills/engineering-plan-review
-ln -s ~/src/hgore-claude/skills/open-pr               skills/open-pr
-ln -s ~/src/hgore-claude/skills/plan-review           skills/plan-review
-ln -s ~/src/hgore-claude/skills/review-pr             skills/review-pr
+for d in ~/src/hgore-claude/skills/*/; do ln -s "$d" "skills/$(basename "$d")"; done
 
-# Hook
+# Hooks
 mkdir -p hooks
-ln -s ~/src/hgore-claude/hooks/block-banned-bash.sh hooks/block-banned-bash.sh
+ln -s ~/src/hgore-claude/hooks/block-banned-bash.sh    hooks/block-banned-bash.sh
+ln -s ~/src/hgore-claude/hooks/block-self-scheduling.sh hooks/block-self-scheduling.sh
 
 # Statusline
 ln -s ~/src/hgore-claude/statusline.sh statusline.sh
@@ -54,90 +121,63 @@ git clone https://github.com/hgorelick/hgore-claude.git ~/src/hgore-claude
 cp -R ~/src/hgore-claude/skills/*    ~/.claude/skills/
 cp ~/src/hgore-claude/hooks/*        ~/.claude/hooks/
 cp ~/src/hgore-claude/statusline.sh  ~/.claude/statusline.sh
-chmod +x ~/.claude/hooks/block-banned-bash.sh ~/.claude/statusline.sh
+chmod +x ~/.claude/hooks/*.sh ~/.claude/statusline.sh
 ```
 
 ### Wire up `settings.json`
 
-If you don't have a `~/.claude/settings.json`, copy the example as a starting point:
+If you don't have a `~/.claude/settings.json`, copy the example. If you do, merge the `statusLine` and `hooks` blocks from `settings.example.json` into it. The hook `command` paths resolve `~` at execution time, so they're portable across machines.
 
 ```bash
-cp ~/src/hgore-claude/settings.example.json ~/.claude/settings.json
+cp ~/src/hgore-claude/settings.example.json ~/.claude/settings.json   # only if you have none
 ```
-
-If you already have one, merge the `statusLine` and `hooks` blocks from `settings.example.json` into it. The hook's `command` resolves `~` at hook-execution time, so the path is portable across machines.
 
 ### Wire up `CLAUDE.md`
 
-The hook is a guard rail for a global rule that lives in your `~/.claude/CLAUDE.md`. The rule has to actually be there or Claude won't know how to comply when the guard fires.
+The hooks guard rails for rules that live in your `~/.claude/CLAUDE.md`. The rules have to be there or Claude won't know how to comply when a guard fires.
 
 ```bash
-# If you don't have a global CLAUDE.md yet:
-cp ~/src/hgore-claude/CLAUDE.md.example ~/.claude/CLAUDE.md
-
-# If you already have one, append the "Global rules" section from CLAUDE.md.example.
+cp ~/src/hgore-claude/CLAUDE.md.example ~/.claude/CLAUDE.md            # if you have none
+# otherwise append the "Global rules" section from CLAUDE.md.example
 ```
 
 ### Verify
 
 ```bash
 claude --version
-# Then start Claude Code in any directory and check:
+# Then in any repo:
 #   - statusline shows: ctx-usage | dir | branch | model
-#   - typing /<skill-name> lists engineering-plan-review, open-pr, plan-review, review-pr
-#   - asking Claude to run `cat some_file.md` triggers a permission prompt
+#   - /<skill-name> lists brief-author, plan-review-v2, execute-plan, …
+#   - asking Claude to `cat file.md` triggers a permission prompt (block-banned-bash)
 ```
 
-## What each skill does
+## How the flow runs in practice
 
-### `/open-pr`
-Stages your changes in logical chunks, makes one commit per concern, pushes the branch, opens a PR into `main` with a structured body. Use after you finish work and want to ship it.
+1. `/brief-author <feature>` then `/brief-review-v2 <feature>` until the brief is APPROVED.
+2. `/plan-alignment <feature>` to pick an architecture direction (bound in `decisions.md`).
+3. `/engineering-plan-author <feature>` then `/engineering-plan-review-v2` until CLOSED.
+4. Per chunk: `/plan-author <feature>/<chunk>` then `/plan-review-v2`. A second consecutive APPROVED auto-opens the plan's docs PR.
+5. `/execute-plan <feature>/<chunk>` — TDD implementation inside an isolated worktree; on a clean (COMPLETE) verdict it auto-opens the chunk's PR into `main`.
+6. `/review-pr-v2` on the PR (started fresh so the review is independent of the code-writing session), then merge, then `/cleanup-worktree`.
 
-### `/review-pr`
-Convenes an adversarial tribunal on the current branch's PR. Multiple "prosecutor" personas (correctness, hallucination, invariant, security, drift, test, scope, factoring) attack the diff, file findings with file:line evidence, fix every defect, and loop until clean. Use after `/open-pr`.
+When a review returns **NEEDS USER INPUT**, `/explain-blockers` triages the blockers into plain-language decisions, or `/solve-blockers` researches each to a recommended fix.
 
-### `/plan-review <plan-path-or-slug>`
-Tribunal review for **per-chunk implementation plans** (`features/<feature>/implementation/<slug>.md`). Verifies every path, line number, identifier, and command in the plan against actual repo state, then prosecutes the plan from each persona's angle. N plans × M personas = N×M parallel review agents.
+## What the hooks do
 
-### `/engineering-plan-review <feature>`
-Sister skill to `/plan-review`, but targets the **engineering plan** (`features/<feature>/engineering-plan.md`) — the layer between the brief and the per-chunk plans. Prosecutes chunk granularity, brief-trace audits, hidden cross-chunk dependencies, false parallelism, missing rollback paths, and implementation-detail leaks.
+**`block-banned-bash.sh`** — a `PreToolUse` matcher on `Bash`. When Claude reaches for a banned form it returns `permissionDecision: "ask"`, surfacing a prompt instead of running silently:
 
-> Both review skills assume a `features/<feature>/` layout with a `brief.md` and (for engineering plans) an engineering-plan.md and per-chunk plans under `implementation/`. They are most useful in repos that adopt that convention; they will still run elsewhere but most of the brief-mapping/structural checks will report findings until you adapt the structure or skip them.
-
-## What the hook does
-
-`hooks/block-banned-bash.sh` is a `PreToolUse` matcher on the `Bash` tool. When Claude tries to run a banned form, the hook returns:
-
-```json
-{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", ...}}
-```
-
-…which surfaces a permission prompt instead of letting the command run silently. Banned forms (with the dedicated alternative):
-
-| Banned                                                | Use instead    |
-|-------------------------------------------------------|----------------|
-| `cat`, `head`, `tail`, `less`, `more` for viewing     | **Read**       |
-| `sed`, `awk` for substitutions                        | **Edit**       |
-| `echo > file`, `printf > file`, heredoc-to-file       | **Write**      |
+| Banned                                                | Use instead      |
+|-------------------------------------------------------|------------------|
+| `cat`, `head`, `tail`, `less`, `more` for viewing     | **Read**         |
+| `sed`, `awk` for substitutions                        | **Edit**         |
+| `echo > file`, `printf > file`, heredoc-to-file       | **Write**        |
 | Standalone `jq` (the `--jq` flag inside `gh` is fine) | **Read** + parse |
 
-The hook short-circuits and lets the call through if the leading command in the pipeline is one of: `gh`, `git`, `cargo`, `rustc`/`rustup`, `npm`/`npx`/`pnpm`/`yarn`/`bun`/`bunx`, `node`/`deno`, `python`/`python3`, `pip`/`pip3`, `uv`, `make`/`cmake`, `docker`, `ls`/`cd`/`wc`/`find`/`rg`/`cp`/`mv`. So `cargo test 2>&1 | head -20` and `gh pr view --json reviews --jq '.reviews'` work without prompting.
+It short-circuits (no prompt) when the leading command is allowlisted — `gh`, `git`, `cargo`, `npm`/`npx`/`pnpm`/`yarn`/`bun`, `node`/`deno`, `python`/`python3`, `pip`, `uv`, `make`/`cmake`, `docker`, `ls`/`cd`/`wc`/`find`/`rg`/`cp`/`mv` — so `cargo test 2>&1 | head` and `gh pr view --jq …` work untouched. To adjust the allowlist, just tell Claude in plain English ("whitelist jq", "add mycli to the hook allowlist") — it edits the regex for you.
 
-The rule pairs with the "Tool selection" / "Escape hatch" sections in `CLAUDE.md.example` — Claude reads those at session start and knows it has to state *what banned form, why no alternative, what outcome* before invoking one.
+**`block-self-scheduling.sh`** — a `PreToolUse` matcher on `Bash`/`Skill`/scheduler tools that returns `ask` when Claude tries to **self-invoke** a hard-to-reverse workflow skill (`/open-pr`, `/execute-plan`, `/review-pr-v2`) or a scheduler. A slash command you type yourself doesn't route through the `Skill` tool, so it only fires on Claude's own programmatic chaining — the thing you want a human in the loop for.
 
-### Customizing the allowlist
-
-Don't like that some tool is banned, or want a project-local CLI added to the allowlist? Just tell Claude in plain English — no need to point it at the file or describe the regex. Things like:
-
-> "whitelist jq in the banned hook"
-> "stop banning awk"
-> "add mycli to the hook allowlist"
-
-…are all enough. Claude will open `~/.claude/hooks/block-banned-bash.sh`, find the right regex (the allowlist is near the top; the banned-pattern blocks are below it), and edit it for you. The next Bash call picks up the change — no restart needed.
-
-### Heads up: it's not foolproof
-
-Even with the `CLAUDE.md` rule *and* the hook firing a permission prompt, Claude will still reach for `cat`/`sed`/`echo > file`/standalone `jq` more often than you'd expect — sometimes after explicitly acknowledging the rule in the same turn. The hook makes that harmless (you just deny the prompt) but it's annoying. When it happens, deny the call and remind Claude to use Read/Edit/Write. Treat the hook as a safety net for when the rule slips, not a guarantee Claude will follow the rule on its own.
+> Heads up: even with the rule in `CLAUDE.md` and the hook firing, Claude still reaches for `cat`/`sed`/`echo > file` more than you'd expect. The hook makes that harmless (deny the prompt); treat it as a safety net, not a guarantee.
 
 ## What the statusline does
 
@@ -147,12 +187,7 @@ Even with the `CLAUDE.md` rule *and* the hook firing a permission prompt, Claude
 <ctx-tokens>/<max> (PCT%) | <dir> | (<branch>*) | [<model>]
 ```
 
-- **ctx-tokens / max**: tokens consumed in the most recent assistant turn, against the model's window (200k or 1M for `[1m]` models). Color shifts green → yellow → red as you approach the cap.
-- **dir**: basename of the current working directory.
-- **branch**: current git branch, with a `*` and yellow tint if the tree is dirty.
-- **model**: short display name from Claude Code (e.g. `[Opus4.7]`).
-
-Sections are skipped when empty (no git repo, no transcript yet).
+Context usage (color-shifting green→yellow→red toward the cap), working-dir basename, git branch (`*` + tint when dirty), and the short model name. Empty sections are skipped.
 
 ## Updating
 
@@ -160,7 +195,7 @@ Sections are skipped when empty (no git repo, no transcript yet).
 cd ~/src/hgore-claude && git pull
 ```
 
-If you symlinked, that's it — your live setup picks up the new files. If you copied, re-run the relevant `cp` commands.
+Symlinked: that's it. Copied: re-run the relevant `cp` commands.
 
 ## License
 
