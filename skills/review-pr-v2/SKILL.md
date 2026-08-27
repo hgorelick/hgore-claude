@@ -604,7 +604,7 @@ Mechanism: `~/.claude/skills/_review-common/orchestrator.md` § Post-fix premise
 For each file Stage 3 modified, identify the lines *added or rewritten in the prose layer* — not lines where only logic changed. Run `git diff --unified=0 <pre-stage-3-tree-ish>..HEAD -- <path>` per edited file and collect the added-line set. Keep lines sitting in:
 - Inline comments (`//`, `#`, `--`, etc.)
 - Block comments / docstrings (`/** */`, `"""`, `'''`, `<!-- -->`)
-- Schema directive prose (an ORM's `///` schema docstrings, index/constraint annotations, SQL `COMMENT ON ...`)
+- Schema directive prose (Prisma `///` docs, `@@index([...])` trailing comments, SQL `COMMENT ON ...`)
 - Markdown / plan-document prose (any added paragraph in `*.md`)
 
 Pure logic, identifier renames, and JSON config edits are out of scope here.
@@ -811,6 +811,7 @@ Before posting the verdict, verify the convergence machinery actually executed. 
 - [ ] **Did the PR test plan get executed and ticked off?** If the PR description has a `## Test plan`, was every item run against the final HEAD, were passing boxes ticked via `gh pr edit --body-file`, were drifted counts corrected, and were failing items either fixed in-PR or escalated as blockers? A verdict posted with runnable test-plan boxes still unchecked — or ticked without actually running the item — is a SKILL.md violation. If the PR has no test plan, record `test_plan: none`.
 - [ ] **Did the remediation-completeness questions run on every `resolved` prior blocker?** The Prior-blocker consistency check answers *closed?*; the two further questions answer *swept?* and *recorded?*. On `invocation_number > 1`, `remediation_completeness` must hold one entry per prior blocker, each with a non-empty `coupled_sites_checked` and an explicit `decisions_entry` (a heading, `none` with its class, or `n/a — not feature-scoped`). An entry marked `resolved` with an empty `coupled_sites_checked` answered only the first question — a one-line fix at the cited line with every sibling call site untouched presents exactly that way — so re-run it. Every `REMEDIATION_INCOMPLETE` / `DECISIONS_PROVENANCE_GAP` filed must appear in the verdict and must NOT have been dropped by carry-forward.
 - [ ] **Did Persist state file run?** Was the state file actually Written? Capture the `path` and the `sha256` (or word count + first 80 chars hash via Read after write) so the verdict template's "State persisted" attestation line is honest, not invented.
+- [ ] **Will the verdict banner end the response?** The banner script runs (with `--skill /review-pr-v2`) after the PR comment posts, and its fenced stdout is the last thing in the response — nothing follows it.
 
 If any checkbox is "no", stop. Surface to the user: "Compliance self-check failed at step <X>. Re-run the missed step or re-spawn personas with correct prompt before posting verdict." Do NOT post a verdict whose attestations would be lies.
 

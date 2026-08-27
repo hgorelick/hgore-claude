@@ -36,8 +36,8 @@ Bootstraps `features/` in a target project: the `README.md` process doc and the 
 ## Bundled templates
 
 `~/.claude/skills/features-init/templates/`:
-- `README.md` — process doc explaining stages, naming, lifecycle, decision-log format.
-- `brief.md` — Stage 1 product brief.
+- `README.md` — process doc explaining stages, naming, lifecycle, decision-log format, and the brief roster: the `Brief | Parent spec | Status` table and the deferred-spec-surface list that are this tree's home for decomposition state, since a spec carries only what is permanently true about its briefs.
+- `brief.md` — Stage 1 product brief, headed by the `Spec:` line naming its parent spec.
 - `engineering-plan.md` — Stage 2 chunk graph + architecture contract.
 - `chunk.md` — Stage 3 per-chunk implementation plan.
 - `decisions.md` — append-only decision log; entries carry a `Status:` line (`bound` | `superseded by "<title>" (<date>)` | `obsolete`) and split into `## Active (bound)` / `## Archived (superseded / obsolete)` so scanners treat only Active bound entries as authoritative.

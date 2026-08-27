@@ -150,6 +150,29 @@ When loading engineering-plan review state, read the canonical slug first; if ab
 back to the legacy bare `<feature>.json`, and on the next persist write the canonical name
 and delete the legacy file. Log the migration in the verdict's state-source line.
 
+## Closed engineering plans
+
+`/ep-close` marks a plan implementation complete: a `<!-- Status: closed — implementation
+complete YYYY-MM-DD -->` frontmatter marker in `engineering-plan.md` (plus a visible
+`**Status:** Closed …` header line), a bound closure entry in the feature's `decisions.md`,
+and `ep_closed: true` in the plan's state sidecars. The frontmatter marker is canonical;
+`/ep-close` is its only writer.
+
+A closed plan is a **sealed contract**:
+
+- **No new chunk rows, ever.** Later scope — including scope that naturally belongs to the
+  closed plan's concern — routes to an open sibling track, a new track (§ Adding a track),
+  or a new feature. Any skill or agent about to propose "add a chunk to `<plan>`" must check
+  the marker first; when closed, proposing the addition is a defect — propose the routing
+  alternative instead, naming where the scope goes.
+- **Not re-authored, re-reviewed, or amended.** `/engineering-plan-author`,
+  `/engineering-plan-review-v2`, and `/plan-author` (for new chunks under it) refuse a
+  closed target and point here. Reopening is a director-only act: the user removes the
+  marker and supersedes the closure entry in `decisions.md`.
+- **Still read normally.** A closed plan remains the authoritative contract for what it
+  shipped — sibling plans, reviewers, and implementers consult it as reference exactly as
+  before. Track listings show it as `closed`.
+
 ## Adding a track to an existing feature
 
 Moving a flat feature to the tracked layout is a **director-level decision**, not something a

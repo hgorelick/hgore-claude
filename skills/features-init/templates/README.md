@@ -67,6 +67,13 @@ Every feature moves through three stages, in order. Do not start the next stage 
 
 High-altitude product doc. Answers *what problem* and *why now*. No implementation detail.
 
+The brief's header names its parent spec on a **`Spec:`** line — `specs/<slug>/spec.md`, or `spec.md` in a
+project with a single root spec. That line is what ties the brief to the spec section that cut it, and
+it is how `/brief-author` resolves the same spec on every re-author without asking again. A spec whose
+`## Decomposition` carries a scope stub for this brief supplies the raw material directly: the stub's
+*outcomes owed* become the Goals, and its *exclusions inherited* land in the Scope buckets they arrive
+sorted into.
+
 Required sections (see `_template/brief.md`):
 - **Problem** — what's broken / missing for the user, in plain language.
 - **Solution** — the proposed shape of the fix, one paragraph.
@@ -147,10 +154,46 @@ Format:
 
 ## Lifecycle
 
+- **Not started** → the spec's decomposition names the brief; no folder exists yet.
 - **Proposed** → brief drafted, not yet approved.
 - **Active** → engineering plan approved; chunks in flight.
 - **Shipped** → all chunks merged, feature verified end-to-end in the live app.
 - **Archived** → folder moved to `features/archive/<feature-name>/`. Do this once shipped and stable for ~2 weeks; keeps `features/` scannable.
+
+## Brief roster
+
+**This file is where brief state lives, and the spec is where brief truth lives.** A spec's
+`## Decomposition` says which briefs exist, what each owes, and where the boundaries between them sit —
+all end-state facts that do not change the day a brief ships. Everything that *does* change as briefs
+get authored and shipped is tracked here. The split is what keeps a status word out of a truth
+document; the two read together cleanly, and neither is complete alone.
+
+Every brief the decomposition names gets a row, whether or not its folder exists yet. The parent spec
+is the one the brief's `Spec:` header names.
+
+| Brief | Parent spec | Status |
+|---|---|---|
+| `<brief-slug>` | `specs/<slug>/spec.md` | Not started \| Proposed \| Active \| Shipped \| Archived |
+
+Keep the roster to those three columns. Dates, owners, chunk counts, and PR links belong to `git log`,
+the PR list, and each per-chunk plan's `Status:` field — a roster that grows a fourth column stops
+being scannable and starts being a tracker nobody trusts.
+
+### Deferred spec surface
+
+Spec units a director acknowledged as **not decomposed this pass**. Each names its destination — the
+spec that will own it, or the brief that will claim it later.
+
+- `<spec unit>` — <destination: a spec slug, a brief slug, or a named follow-on pass>
+
+A spec's Coverage table admits exactly two dispositions, claimed by a brief or excluded by a named
+seam, and this list adds no third one. It is the record of a director-acknowledged deferral — the
+resolution path of a coverage gap. Each entry pairs with a `Status: bound` entry in the spec's
+decisions log naming the same destination, and it is the **pair** that resolves the gap: the list
+entry alone is a note nothing bound, the bound entry alone leaves the surface unlisted.
+Leaving a unit undestined here is the same defect as an undestined deferral in a brief's Scope — it
+becomes indistinguishable from a unit everyone forgot. An entry is removed only when the destination
+absorbs it, and only after its substance is verified present there.
 
 ## Rules of thumb
 

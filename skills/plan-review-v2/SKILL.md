@@ -354,19 +354,19 @@ Chunk-plan-layer equivalent of `/engineering-plan-review-v2`'s Stage 1.5. Catche
 
    > *Positive — real trespass at chunk-plan layer:*
    >
-   > > Parent feature's Non-goal: "No on-demand-path bidirectional sync. The sync path users hit at runtime stays one-directional after this feature ships."
+   > > Parent feature's Non-goal: "No on-demand-path bidirectional rewrite. The hydration path users hit at runtime stays one-directional after this feature ships."
    > >
    > > Chunk plan §Owns: "Modifies `src/lib/userProfileSync.ts` to make `syncUserProfile` call `reconcileIdentities` in both directions (CRM→Directory and Directory→CRM) when invoked by the on-demand resolver."
    > >
-   > > Reasoning: §Owns commits to the bidirectional sync on the on-demand path. The Non-goal forbids exactly this. The fact that the reconciliation primitive is "available" for bidirectional use does not exempt the chunk from the Non-goal — the chunk is committing to wire it into the on-demand path.
+   > > Reasoning: §Owns commits to the bidirectional rewrite on the on-demand path. The Non-goal forbids exactly this. The fact that the cascade primitive is "available" for bidirectional use does not exempt the chunk from the Non-goal — the chunk is committing to wire it into the on-demand path.
    >
    > *Negative — not a trespass at chunk-plan layer:*
    >
-   > > Parent feature's Non-goal: "No filtering of which records appear."
+   > > Parent feature's Non-goal: "No filtering of which credits appear."
    > >
-   > > Chunk plan §Tests to add: "Test that a User with 50 linked records returns all 50 records in the API response, none truncated, none filtered by type or role."
+   > > Chunk plan §Tests to add: "Test that a Person with 50 credits returns all 50 credits in the API response, none truncated, none filtered by department or role."
    > >
-   > > Reasoning: the test is *verifying* the Non-goal is honored. The chunk plan's §Tests asserting no filtering is the affirmative form of honoring "No filtering of which records appear." This is the chunk-plan equivalent of the engineering plan's "Non-goals enforcement" section — honoring, not trespassing.
+   > > Reasoning: the test is *verifying* the Non-goal is honored. The chunk plan's §Tests asserting no filtering is the affirmative form of honoring "No filtering of which credits appear." This is the chunk-plan equivalent of the engineering plan's "Non-goals enforcement" section — honoring, not trespassing.
 
 3. **§Goal verbatim-quote check.** The chunk plan's §Goal line MUST contain a verbatim quote from `brief.md` § Goals or § User-facing changes, OR explicitly cite the engineering plan's `### Supporting infrastructure` Brief-mapping entry. The prosecutor's `BRIEF_GOAL_UNDELIVERED` class covers the failure: a §Goal line that paraphrases or invents a Goal not in the brief, with no Supporting-infrastructure escape, is a trespass at the brief-grounding layer.
 
@@ -407,7 +407,7 @@ Use the template in `~/.claude/skills/_review-common/agent-prompt.md`. Substitut
 - `{pre_resolved_hard_findings}` — anything Stage 1 already raised
 - `{active_critical_pair_subset}` — `P-CLASS-SCOPE, P-FULL-FILE, P-CHUNK-TEST-PATHS, P-CHUNK-COMMANDS, P-CHUNK-SINGLE-CONCERN, P-CHUNK-READ-FIRST`
 - `{target_locator}` — the plan path
-- `{how_to_get_it}` — `Read <plan_path>`; agents Read source-of-truth files (CLAUDE.md, the project's schema file, brief.md, engineering-plan.md, persona files) on demand
+- `{how_to_get_it}` — `Read <plan_path>`; agents Read source-of-truth files (CLAUDE.md, schema.prisma, brief.md, engineering-plan.md, persona files) on demand
 - `{pr_description_or_brief_mapping}` — N/A (chunk plans don't have a PR description; if the plan is under `features/`, mention the parent feature's brief.md path)
 - `{skill_specific_extensions}` — *Imagine implementing this plan from a cold start. What second-order issues surface during execution that the plan does not address? What scenario can you construct where executing the chunk verbatim produces an incorrect result? Is the TDD coverage actually sufficient to catch the failure modes the persona cares about, or only the golden path?*
 - `{skill_specific_preamble}` — none
@@ -586,7 +586,7 @@ Record both consultations in `decisions_md_consultation` and the existing carry-
 
 Verdict gate logic in `_review-common/blocker-classes.md`. Compute Tier-1 weight (CRITICAL=8, HIGH=4, MEDIUM=2, LOW=1) and Tier-2 weight after fix application.
 
-**Final line — verdict banner.** After the per-plan output below, the multi-plan summary (if any), and any §3h auto-open, run the shared verdict-banner script and emit its output verbatim (`~/.claude/skills/_review-common/blocker-classes.md` § Verdict banner) as the **very last** thing in your response, so the verdict is visible without scrolling.
+**Final line — verdict banner.** After the per-plan output below, the multi-plan summary (if any), and any §3h auto-open or manual-open analysis, run the shared verdict-banner script and emit its output verbatim (`~/.claude/skills/_review-common/blocker-classes.md` § Verdict banner) as the **very last** thing in your response, so the verdict is visible without scrolling.
 
 ### 3g. Output (per plan)
 
@@ -651,17 +651,18 @@ If `NEEDS USER INPUT`: the next step is **targeted edits to clear the listed blo
 
 If `APPROVED` **and the prior round was not APPROVED** (first clean pass): re-invoke `/plan-review-v2` once more to confirm convergence. A second consecutive APPROVED auto-opens the plan-doc PR — see §3h.
 
-If `APPROVED` **and the prior round was also APPROVED**: §3h has already opened the plan-doc PR; the review cycle is complete.
+If `APPROVED` **and the prior round was also APPROVED**: §3h has either opened the plan-doc PR or rendered its manual-open analysis; the cycle is complete unless that analysis said `RE-REVIEW`.
 
 ### 3h. Auto-open the plan-doc PR on the second consecutive APPROVED
 
-When this round renders `APPROVED` **and** the loaded state's `last_verdict` was also `APPROVED`, the plan has converged across two consecutive clean reviews — ship the plan-doc PR **automatically, inline**. Run the `git` / `gh` steps **directly**; do **NOT** invoke the `/open-pr` skill. Going through Bash keeps this out of `~/.claude/hooks/block-self-scheduling.sh` (which guards only the `Skill` tool), so no confirm prompt fires. This is the single sanctioned auto-open, per your project's conventions on auto-opening PRs.
+When this round renders `APPROVED` **and** the loaded state's `last_verdict` was also `APPROVED`, the plan has converged across two consecutive clean reviews — ship the plan-doc PR **automatically, inline**. Run the `git` / `gh` steps **directly**; do **NOT** invoke the `/open-pr` skill. Going through Bash keeps this out of `~/.claude/hooks/block-self-scheduling.sh` (which guards only the `Skill` tool), so no confirm prompt fires. This is the single sanctioned auto-open — see `memory/feedback_never_open_pr_without_explicit_ask.md`.
 
 All of these must hold, or skip the auto-open and print the manual next step instead:
 
 - **Exactly one plan under review.** In multi-plan mode, do not auto-open; list which plans reached 2×APPROVED and let the user open each.
 - **`features/`- or `fixes/`-rooted plan** — both are git-tracked, so the plan doc ships as a PR (a `fixes/` one-off's PR bundles just the plan file, or the plan file plus any review cross-file edits). A `.scratch/` plan is gitignored and has no PR flow — skip the auto-open and print the manual next step.
 - **On a non-`main` branch** — `git rev-parse --abbrev-ref HEAD` is not `main` and not detached (normally the `<slug>-plan` plan worktree/branch). On `main`/detached, skip and note it.
+- **This round's fixes stayed bounded.** If this round's applied fixes (Stage 1/3 plus cross-file edits) materially rewrote plan semantics — scope, exit criteria, contracts, test plans, DAG-relevant content — then the second APPROVED approved a plan the first APPROVED never saw, and auto-shipping it would skip human eyes on effectively-new content. Wording, formatting, quote-sync, and state/sidecar bookkeeping do not count against this. Skip the auto-open and run the manual-open analysis below.
 
 Steps (follow the project's commit/PR conventions — `type: description` commits, no AI-attribution trailer, docs-only PR so **no Test plan section**, no spurious `#N`):
 
@@ -672,7 +673,19 @@ Steps (follow the project's commit/PR conventions — `type: description` commit
 5. **Open the PR:** `gh pr create --base main --head "$BRANCH" --title "<same as the commit message>" --body "<one-paragraph summary of the plan and the brief/EP Goals it implements, or — for a `fixes/` plan — the GitHub issue it fixes>"`.
 6. Report `**Auto-opened PR:** <url>` on its own line in the verdict.
 
-After the PR is open the review cycle is complete. Do **NOT** chain into `/execute-plan` or `/review-pr-v2` — those still require the user to start them fresh in a clean context (per your project's conventions on auto-invoking workflow skills; the hook still guards both). The auto-open is bounded to this 2×APPROVED plan-doc convergence point and nowhere else.
+After the PR is open the review cycle is complete. Do **NOT** chain into `/execute-plan` or `/review-pr-v2` — those still require the user to start them fresh in a clean context (`memory/feedback_never_auto_invoke_workflow_skills.md`; the hook still guards both). The auto-open is bounded to this 2×APPROVED plan-doc convergence point and nowhere else.
+
+#### Manual-open analysis — auto-open skipped for unbounded fixes
+
+Runs only when the bounded-fixes condition is the one that failed (single plan, git-tracked root, non-`main` branch all hold — a `.scratch/` plan or `main` checkout has no PR to analyze). One final pass, inline, deciding whether the user can open the PR now or the plan needs a third round:
+
+1. Collect this round's full delta: `git diff HEAD` plus any commits made this round, scoped to the plan file and the cross-file edits.
+2. Judge every hunk on two questions:
+   - **Traceable** — it maps to a named item in this round's report (Stage 1 mechanical fix, Stage 3 fix, convention extraction, cross-file edit). An orphan hunk no finding explains fails.
+   - **Re-verified** — this round's own machinery already re-checked the changed content (post-fix premise verification, same-round re-prosecution, structural lint, quote checks). A hunk none of those covered fails.
+3. Every hunk passes both → render `**Manual open: COMFORTABLE** — {n} hunks, all traceable and re-verified; {one clause naming the largest change}`. The user opens the PR; never auto-open on this path and never self-invoke `/open-pr`.
+4. Any hunk fails either → render `**Manual open: RE-REVIEW** — {hunk}: {which question it failed and why}`. Next step is a fresh `/plan-review-v2` round.
+5. Feed the same line to the verdict banner's `--next`.
 
 ---
 

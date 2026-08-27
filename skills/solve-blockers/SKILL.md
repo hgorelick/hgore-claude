@@ -83,7 +83,7 @@ Either way, the rest of the skill operates on `decisions: []` — the source pat
 When the input resolved to a raw state file / PR / pasted verdict, apply the same pre-flight as `/explain-blockers` before any clustering or research:
 
 - Verdict is `NEEDS_USER_INPUT` (any source skill, either side), **OR**
-- Verdict is `APPROVED` and `prior_blockers` contains `IMPLEMENTABILITY_GAP` entries (engineering-plan layer, either review or author side).
+- Verdict is `APPROVED` and `prior_blockers` contains `IMPLEMENTABILITY_GAP` entries (engineering-plan or spec layer, either review or author side), **OR** `SPEC_BOUNDARY_UNBOUND` entries (vision layer, either side). None of those gates the `APPROVED` it arrives on — at the engineering-plan and vision layers they gate `CLOSED`, and at the spec layer the gap blocks only `/brief-author` for the brief slug it names — so an APPROVED verdict carrying them is the normal shape at those layers, not an anomaly.
 
 If neither holds (CLOSED, clean APPROVED, etc.), surface the status to the user and stop — there is nothing to solve.
 
@@ -115,7 +115,7 @@ A recommended solution qualifies as ≥95% confidence only when **all six** of t
 
 5. **No open dependency on a sub-95% sibling blocker.** If two blockers are linked such that solution X for blocker A presupposes solution Y for blocker B, then Y must also be at ≥95% within this same pass before X can be confirmed at ≥95%. Cascading low confidence through dependencies is a forbidden short-circuit — each cluster head must clear the bar on its own merits OR the entire cluster gets the unknown-question treatment.
 
-6. **User stake articulable in one sentence.** Claude must be able to write, in a single concrete sentence, what the user is committing to by accepting this solution. Not the implementation reason ("uses the existing helper") — the user-visible commitment ("the queue auto-dequeue will fire even when the item is created via the bulk-import path, not just the manual-review flow"). If the stake can't be articulated cleanly, the framing isn't tight enough, which means the research isn't deep enough, which means the bar isn't met.
+6. **User stake articulable in one sentence.** Claude must be able to write, in a single concrete sentence, what the user is committing to by accepting this solution. Not the implementation reason ("uses the existing helper") — the user-visible commitment ("the watchlist auto-remove will fire even when the ranking is created via the import path, not just the rate-a-thing flow"). If the stake can't be articulated cleanly, the framing isn't tight enough, which means the research isn't deep enough, which means the bar isn't met.
 
 **All six are mandatory.** If any one fails, the recommendation does not qualify as ≥95%. Either continue research to close the gap, or escalate to the up-front user-question batch (next section). Do not weaken the bar to fit the available research.
 
@@ -195,7 +195,7 @@ Some gaps are not closable by Claude alone. Examples:
 - The blocker depends on an architectural intent the user has not articulated.
 - External library behavior is genuinely ambiguous (docs missing, multiple plausible interpretations).
 
-For each such gap, identify the **specific question** that, when answered, would let research resume. Frame the question concretely — not "what do you want?" but "should the queue removal fire (a) only when the submission commits, or (b) immediately when the user picks a status even if they abandon the review?"
+For each such gap, identify the **specific question** that, when answered, would let research resume. Frame the question concretely — not "what do you want?" but "should the watchlist removal fire (a) only when the ranking commits, or (b) immediately when the user picks a tier even if they abandon comparisons?"
 
 After researching all decisions, gather all such questions into a single up-front batch. Surface them to the user **before** rendering any solutions:
 
@@ -223,12 +223,12 @@ The output is the header plus per-decision blocks in dependency order (or in the
 ```
 # Recommended solutions: <plain-language source identifier>
 
-**N decisions resolved at ≥95% confidence.** <if any flagged residuals: "K decisions carry residual uncertainty — flagged inline."> <if any retraction candidates: "Plus M items the situation has moved past — re-run /<source-skill> to close them.">
+**N decisions settled.** <if any flagged residuals: "K aren't fully settled — each says below what's still open."> <if any retraction candidates: "Plus M items the situation has moved past — re-run /<source-skill> to clear them.">
 
 ---
 ```
 
-The source identifier matches what `/explain-blockers` used (feature name, PR title) — not the state-file path. The "decisions resolved" count is the number that hit the ≥95% bar cleanly; residuals are counted but separated.
+The source identifier matches what `/explain-blockers` used (feature name, PR title) — not the state-file path. "Settled" means the decision hit the ≥95% bar cleanly — the bar stays internal; the report never renders percentages except on a not-fully-settled block.
 
 ### Per-decision block
 
@@ -243,7 +243,7 @@ Each decision is a self-contained block. The format extends `/explain-blockers`'
 
 **Why:** [one sentence. Lead with what accepting this commits the user to (the user-stake sentence from condition 6). Add a single clause on the dominant axis if the stake doesn't carry it alone.]
 
-**Verification:** [one line. Format: "Premise CONFIRMED at <basename>; <library facts checked, with installed version>; authority-order clean [or: requires <upstream artifact> amendment]; no sub-95% dependencies."]
+**Verification:** [one line, plain language: what was checked and what it showed. Say "I confirmed X is still true in the code / the spec says Y / the decision log has nothing against it / the installed version of <library> does Z". The six confidence conditions are the internal checklist — never render their names. If the fix needs an upstream doc changed first, say which doc in plain words.]
 
 **Also resolves:** [linked blockers, one short phrase each, comma-separated. Omit if the cluster is a singleton.]
 ```
@@ -251,17 +251,17 @@ Each decision is a self-contained block. The format extends `/explain-blockers`'
 **Worked example (illustrative — not real blockers):**
 
 ```
-### Decision 2: Should the queue auto-dequeue fire on status-pick or only on submission commit?
+### Decision 2: Should the watchlist auto-remove fire on tier-pick or only on ranking commit?
 
-**Options:** Fire on status-pick (immediate); fire on commit (atomic with submission).
+**Options:** Fire on tier-pick (immediate); fire on commit (atomic with ranking).
 
-**Apply:** In the queue-removal logic, move the trigger from the status-pick handler to the submission-commit transaction. Wrap removal and submission-insert in the same database transaction so they succeed or fail together.
+**Apply:** In the watchlist-removal logic, move the trigger from the tier-pick handler to the ranking-commit transaction. Wrap removal and ranking-insert in the same Prisma transaction so they succeed or fail together.
 
-**Why:** Accepting this commits you to "abandoned review flows do not silently shrink the queue" — the spec already calls atomicity out as a hard requirement, so commit-time removal is the only path that doesn't contradict it.
+**Why:** Accepting this commits you to "abandoned comparison flows do not silently shrink the watchlist" — the spec already calls atomicity out as a hard requirement, so commit-time removal is the only path that doesn't contradict it.
 
-**Verification:** Premise CONFIRMED at schema.sql + queueService; spec.md §Queue auto-dequeue cites atomicity ("submission removes from queue atomically"); no decisions.md entry conflicts; transaction shape verified against installed ORM client version; no sub-95% dependencies.
+**Verification:** I confirmed the trigger really lives in the tier-pick handler today; the spec says ranking removes from the watchlist atomically; nothing in the decision log conflicts; the installed Prisma version supports the transaction shape.
 
-**Also resolves:** "queue inconsistency on abandoned reviews" prosecution; "missing transaction in status-pick handler" finding.
+**Also resolves:** the related worry that abandoned comparisons leave the watchlist out of sync.
 ```
 
 For decisions that carry residual uncertainty (the bar not fully met even after the user-question batch — rare by design), use this variant:
@@ -271,7 +271,7 @@ For decisions that carry residual uncertainty (the bar not fully met even after 
 
 **Options:** [...]
 
-**Apply (residual uncertainty — ~XX%):** [the leaning concrete change, with one explicit clause naming the unresolved condition: "Apply <X>; this holds if <Y> is true — I could not verify <Y> from <reason>."]
+**Apply (not fully settled — ~XX% sure):** [the leaning concrete change, with one explicit clause naming the unresolved condition: "Apply <X>; this holds if <Y> is true — I could not verify <Y> from <reason>."]
 
 **Why:** [as normal, but call out the unmet condition.]
 
@@ -288,10 +288,14 @@ For retraction-candidate decisions (premise STALE/FALSE), group at the end under
 
 Same baseline as `/explain-blockers` — the user is the director, not the implementer. They do not read source. File paths, line numbers, internal identifier names, `git` commands, and review-machinery vocabulary stay out of the rendered output **except** in two places where engineer-language compression is allowed:
 
-- **The Verification line** — canonical filenames (`schema.sql`, `decisions.md`, `package.json`), package versions, gate names. Full paths and line numbers are still out. The Verification line is the evidence trail; naming files by their canonical basename is clearer than paraphrasing.
-- **The Apply line, only when the change is a file/function-level edit** — canonical filenames and function/symbol names are allowed when the user can't act without them ("In `queueService.removeOnStatusPick`, …"). Director-language framing still dominates the sentence; the identifier is the anchor, not the whole line. Full paths and line numbers stay out.
+- **The Verification line** — canonical filenames (`schema.prisma`, `decisions.md`, `package.json`), package versions, gate names. Full paths and line numbers are still out. The Verification line is the evidence trail; naming files by their canonical basename is clearer than paraphrasing.
+- **The Apply line, only when the change is a file/function-level edit** — canonical filenames and function/symbol names are allowed when the user can't act without them ("In `watchlistService.removeOnTierPick`, …"). Director-language framing still dominates the sentence; the identifier is the anchor, not the whole line. Full paths and line numbers stay out.
 
 Everywhere else (Options, Why, Also resolves, header, retraction block): plain language. Library names, framework names, features the user named themselves are fine. Internal identifiers only when the user already uses them.
+
+**Banned vocabulary — nowhere in the rendered report, including Verification and Apply.** The review machinery's own words mean nothing to the user and read as noise. Never render: blocker-class labels (`OPEN_QUESTION`, `SURFACE_PARITY_GAP`, any ALL-CAPS class), "blocker class", "premise", "prosecution", "prosecutor", "persona", "carry-forward", "round-memory", "round N", "tier", "HARD"/"SOFT", "sidecar", "state file", "authority order", "verdict", "finding", "retraction", "residual". Say what happened instead: "the review flagged…" not "the persona filed a finding"; "I checked the claim is still true" not "premise CONFIRMED"; "this one's moved past — the code already changed" not "retraction candidate"; "not fully settled" not "residual". A machinery word is allowed only when the user typed it first in this conversation.
+
+**Last pass before rendering.** Reread the whole report as the user: short sentences (about twenty words), one idea each, no abbreviation the report didn't spell out first, no term that needs this skill's definitions to parse. Any sentence that fails gets rewritten in plain words — not deleted, the content stays; only the register changes.
 
 ---
 
@@ -301,6 +305,15 @@ Do **not** offer to save the report — it's already in scrollback, and the oper
 
 - If **yes**: work each decision in dependency order (top first), making the edits its **Apply** line describes. Only the plan / code / brief / PR change — **state files stay read-only** (`~/.claude/cache/review-state/` and `~/.claude/cache/author-state/` are owned by the source-skill machinery). Skip retraction-cluster items — their resolution is "re-run the source skill", not an edit. For a residual-uncertainty decision, apply its leaning fix only if the operator confirms that specific one; the residual flag means the ≥95% bar wasn't fully met, so don't fold it silently into a blanket "apply all". When the edits land, name the source skill to re-invoke so its round-memory / carry-forward machinery validates them.
 - If **no**: stop. The recommendations stand in scrollback — the operator can ask Claude to apply any of them in a later turn, or re-run the source skill once they're applied.
+
+**Final line — verdict banner.** Every terminal path of this skill ends with the shared verdict-banner script's fenced stdout, emitted verbatim as the very last thing in the response (`~/.claude/skills/_review-common/blocker-classes.md` § Verdict banner, "The triage pair banners too"). `--skill` names the SOURCE skill to re-invoke; `<ROUND>` is the source verdict's round (`?` when the source carried none):
+
+- **Yes** (fixes applied) → `RESOLVED`, count = blockers the applied decisions cover. Decisions the operator excluded (declined residuals, retraction clusters) stay out of the count.
+- **No** (recommendations stand) → `DECISIONS PENDING`, count = decisions rendered.
+- Refusal paths (e.g. a `DRAFT_EMITTED` source) → `DECISIONS PENDING`, count 1, `--skill` naming the author skill to re-run.
+- Nothing to research (clean `APPROVED` / `CLOSED`) → echo the source verdict's status, round, and blocker count.
+
+The banner's machine vocabulary (`VERDICT`, blocker counts) is exempt from the banned-vocabulary rule — it is the pipeline's shared status line, not report prose.
 
 ---
 
@@ -323,6 +336,7 @@ Do **not** offer to save the report — it's already in scrollback, and the oper
 - **Asking the user mid-rendering.** All user questions are batched up-front, **before** any solution block is rendered. Interrupting the report to ask a clarifying question forces the user to re-load context twice and erodes trust in the skill's planning.
 - **Two-round user questions.** First batch surfaces N questions, user answers, second pass surfaces M more. Don't. New gaps that emerge after the user has answered are residuals, not a second batch.
 - **Engineer-language leakage outside Verification / Apply.** The Verification line and the Apply line are the only carve-outs for canonical filenames and identifier names. The Options / Why / Also-resolves lines stay director-language. Cross-contamination ("file paths everywhere") undoes the rendering discipline.
+- **Machinery vocabulary anywhere in the report.** The filename carve-out above is not a jargon carve-out: "premise CONFIRMED", class labels, "prosecution", "residual" and the rest of the banned list are out even on Verification/Apply lines. If a line only makes sense to someone who has read this skill, it isn't done.
 - **Padding with strawmen.** Same as `/explain-blockers`. When only one option is viable, write "Single call: …"
 - **Ignoring sibling dependencies.** Confidence does not propagate up through dependencies for free — a recommendation that presupposes another sub-95% recommendation is itself sub-95%. Walking the dependency DAG is mandatory.
 - **Reshuffling the decision order when input was an /explain-blockers report.** The user has already mentally mapped the indices. Keep the order /explain-blockers used. Reordering forces them to re-read.

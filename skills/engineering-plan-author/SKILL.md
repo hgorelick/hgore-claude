@@ -8,6 +8,8 @@ user-invocable: true
 
 Produces or rewrites a feature's `engineering-plan.md`. Pre-empts the failure modes `/engineering-plan-review-v2` keeps surfacing — chunk overscoping, brief drift, decision-closure gaps, false parallelism, position-encoded slugs.
 
+**Closed-plan guard.** If the resolved `engineering-plan.md` carries the `/ep-close` closure marker (`Status: closed` frontmatter), refuse: a closed plan is implementation complete and accepts no re-authoring or new chunks — new scope routes to an open sibling track, a new track, or a new feature (`~/.claude/skills/_plan-common/layout.md` § Closed engineering plans). Reopening is a director-only act.
+
 **Plan-root resolution.** Read `~/.claude/skills/_plan-common/layout.md` before resolving the argument. A feature is either **flat** (one `engineering-plan.md` at `features/<feature>/`) or **tracked** (one per track at `features/<feature>/plans/<track>/`). Throughout this skill, **`<plan-root>`** is the directory holding the resolved `engineering-plan.md`; `brief.md` and `decisions.md` always live at the feature root `features/<feature>/`, shared by every track.
 
 The engineering plan is the contract between the brief (what we're shipping) and the chunk plans (how each piece is built). Every defect at this layer multiplies: a 4-concern chunk row produces a 4-concern chunk plan; a missing decision-closure entry means every chunk plan re-prosecutes the same cross-chunk wiring; a brief Goal not mapped to a chunk means the feature ships incomplete.
@@ -18,6 +20,7 @@ The engineering plan is the contract between the brief (what we're shipping) and
   - `<feature>` — the feature directory under `features/`. Required if not inferable from cwd. A tracked feature resolved without a track stops and asks which track (or whether a new one is intended); it does not pick one.
   - `<feature>/<track>` — one specific plan of a tracked feature. Authoring a track that does not exist yet creates `features/<feature>/plans/<track>/` — but adding a track to a flat feature is a director-level call, so confirm in plain language before migrating an existing flat plan into `plans/`.
   - `--draft` — quick-exploration mode; skip Plan-lint, Concern-lint, Ground-truth audit, and Self-prosecution.
+  - `--no-worktree` — (when your project provides a worktree bootstrap script) skip **Engineering-plan-worktree provisioning** and author in the current checkout. Use when you deliberately want the plan written in place — e.g. you are already set up in the tree you want it to land in, or you are consciously not using a per-plan branch.
 
 **The author runs once per cycle.** It produces the first draft; the next step in the cycle is to run `/engineering-plan-review-v2`, and the session agent then applies its findings — plus your blocker resolutions — directly to `engineering-plan.md`. The author is not re-invoked to apply changes. There is no `--rewrite` flag. When `<plan-root>/engineering-plan.md` already exists or its author sidecar is present, invoke `/engineering-plan-author <feature>` again only for an explicit clean-slate re-author (ask in plain language); that fresh run treats the existing plan and any prior review state as carry-forward constraints — a chunk the user removed or a decision the user closed is not re-introduced.
 
@@ -41,12 +44,25 @@ State load (deterministic; ~5 seconds)
   ├─ Read brief author sidecar at ~/.claude/cache/author-state/<feature>__brief.json (upstream context)
   └─ Determine cold vs warm mode
 
-Source ingest (deterministic; ~60 seconds)
+Engineering-plan-worktree provisioning (when a bootstrap script exists; deterministic; plain `git worktree add` off origin/main — the script itself is NOT used)
+  ├─ No-op (author in place) when: --no-worktree, already inside a linked worktree, or no worktree bootstrap script
+  ├─ WT_NAME = BRANCH = <feature>-ep (flat) or <feature>-<track>-ep (tracked); reuse .worktrees/<WT_NAME> on branch <WT_NAME> if present; else create off origin/main
+  │   (git fetch origin main; git branch <WT_NAME> origin/main; git worktree add .worktrees/<WT_NAME> <WT_NAME>)
+  ├─ Re-anchor cwd to the worktree — every repo read below (brief.md, decisions.md, existing engineering-plan.md, CLAUDE.md, schema.prisma, operations.graphql, sibling plans)
+  └─ Cold-create fallback: a brief.md / decisions.md not yet on origin/main is read from the
+      invocation checkout by absolute path; the new engineering-plan.md still lands in the worktree
+
+Source ingest (deterministic; ~60 seconds — runs inside the plan worktree when provisioned)
   ├─ Read brief.md (HARD-blocking — engineering plan without brief is fan fiction)
+  ├─ Resolve the parent spec from the brief's `**Spec:**` header by file presence
+  │   (no header → every spec-layer step below is a no-op; a header whose path
+  │    resolves to nothing → same skips, plus OPEN_QUESTION for the dangling header)
+  ├─ Read the parent spec's `## Decomposition` — this brief's scope stub, the Seams, the Coverage table
+  ├─ Read the parent spec's decisions logs (per-spec + `specs/decisions.md`, nearest first) — `## Active (bound)` entries only
+  ├─ Resolve the brief's inherited exclusions into the spec sections they reference (targeted reads)
   ├─ Read decisions.md (every dated entry, especially cross-chunk wiring)
   ├─ Read existing engineering-plan.md (warm mode — when the file or sidecar already exists)
-  ├─ Read CLAUDE.md, MEMORY.md, project memory files, the project's schema file
-  │   (e.g., an ORM schema), and its API-contract file (e.g., a GraphQL/OpenAPI operations file)
+  ├─ Read CLAUDE.md, MEMORY.md, project memory files, schema.prisma, operations.graphql
   ├─ Read sibling engineering plans (features/*/engineering-plan.md and
   │   features/*/plans/*/engineering-plan.md) for shape/tone consistency
   └─ Build invariants ledger and identifier ledger
@@ -142,10 +158,11 @@ Self-prosecution and imagined-implementer (`_author-common/self-prosecution-prot
   │     - Attempt to author its chunk plan in a single thought-experiment pass (not actually written)
   │     - Surface every cross-chunk wiring decision the imagined-implementer cannot bind
   │     - File these as IMPLEMENTABILITY_GAP — same blocker class the reviewer uses
+  ├─ Run the no-annexation check at chunk grain against the parent spec's Coverage table
   ├─ Consolidate findings; apply auto-fixable
   ├─ Run post-fix premise verification on orchestrator-rewritten prose
   ├─ Classify residuals (STABLE_DISAGREEMENT, OPEN_QUESTION, FIX_INTRODUCED_PREMISE_INVERSION,
-  │   IMPLEMENTABILITY_GAP, BRIEF_AMENDMENT_NEEDED, UNCORROBORATED_RESET)
+  │   IMPLEMENTABILITY_GAP, BRIEF_AMENDMENT_NEEDED, SPEC_AMENDMENT_NEEDED, UNCORROBORATED_RESET)
   └─ Decide emission via three-state verdict:
       ├─ CLOSED: write engineering plan with NO `Status:` frontmatter + persist + verdict (per-chunk authoring is unblocked)
       ├─ APPROVED: write engineering plan with NO `Status:` frontmatter + persist + verdict (shape-correct, but cross-chunk
@@ -166,6 +183,15 @@ Read the author sidecar. Schema (extends the brief-author sidecar with engineeri
 {
   "feature": "<feature>",
   "artifact_path": "<plan-root>/engineering-plan.md",
+  "parent_spec": "specs/<slug>/spec.md | spec.md | null (the brief carries no `**Spec:**` header) | named but missing — <path> (the header names a file that is not on disk)",
+  "decomposition_stub": "ingested | absent",
+  "engineering_plan_worktree": {
+    "provisioned": <bool>,
+    "path": "<.worktrees/<WT_NAME> or null when in-place>",
+    "branch": "<WT_NAME or null when in-place>",
+    "in_place_reason": "--no-worktree | already-in-linked-worktree | no-bootstrap-script | null",
+    "upstream_from": "worktree | invocation-checkout (cold-create fallback)"
+  },
   "authoring_mode": "ship | draft",
   "ground_truth_at": "<ISO 8601 UTC>",
   "self_prosecution_at": "<ISO 8601 UTC>",
@@ -185,6 +211,7 @@ Read the author sidecar. Schema (extends the brief-author sidecar with engineeri
   "ground_truth_log": [...],
   "self_prosecution_findings": [...],
   "imagined_implementer_findings": [...],
+  "no_annexation": "not_applicable | clean | <N> claims",
   "exclusion_challenges": [...],
   "conformance_gate_model": "<model pinned for the Brief-conformance gate, or null if it did not run>",
   "ground_truth_model": "<haiku unless inline>",
@@ -229,9 +256,49 @@ Read the author sidecar. Schema (extends the brief-author sidecar with engineeri
 
 `prior_blockers` / `recently_resolved_blockers` mirror the reviewer state schema in `~/.claude/cache/review-state/` so `/explain-blockers` parses both with one parser. Verdict semantics differ from brief-author / plan-author: `APPROVED` means shape-correct AND one or more `IMPLEMENTABILITY_GAP` entries remain in `prior_blockers`; `CLOSED` means `prior_blockers` is empty AND every cross-chunk decision is bound. `DRAFT_EMITTED` is set when authoring_mode is `--draft` (Plan-lint, Concern-lint, Ground-truth audit, and Self-prosecution skipped); the engineering plan IS written to disk in this mode with NO `Status:` frontmatter, and the sidecar's `authoring_mode: "draft"` carries the load-bearing draft signal that downstream skills consult. `NEEDS_USER_INPUT` is set when one or more HIGH+ blockers remain (other than IMPLEMENTABILITY_GAP, which lands at APPROVED); the partially-improved engineering plan IS written to disk with frontmatter `Status: needs-user-input` AND an inline `## Pending blockers` section listing each unresolved finding verbatim — the session agent then applies the user's blocker resolutions directly to the plan and clears the `Status:` line once they land, and the author is not re-invoked. Only HIGH+ findings land in `prior_blockers`; LOW findings under the polish floor stay in `authoring_residual`.
 
+`decomposition_stub: "absent"` is the one name for the no-decomposition degradation, and `/engineering-plan-review-v2` records the same condition as `Decomposition trace: N/A — no decomposition resolved`. One condition, one vocabulary per side. `parent_spec` carries three resolution states, not two: a path, `null` when the brief names no spec, and `named but missing — <path>` when it names one that is not on disk — the last is a finding, not a silent no-op.
+
 Also read the review-state at `~/.claude/cache/review-state/<slug>.json` (if absent, fall back to the legacy bare `<feature>.json` the reviewer wrote before the slug rule was unified — see `_plan-common/layout.md` § Migration note). Its `recently_resolved_blockers` list constrains the new draft (warm-mode carry-forward at the engineering-plan layer): re-introducing a chunk the user removed, or re-prosecuting a decision the user closed, is `FIX_INTRODUCED_PREMISE_INVERSION`.
 
 Also read the brief-author sidecar `~/.claude/cache/author-state/<feature>__brief.json` if present. Its `introduced_identifiers` list (rare at the brief layer) and `authoring_residual` items inform the engineering-plan draft.
+
+---
+
+## Engineering-plan-worktree provisioning (when your project provides a worktree bootstrap script; runs after State load, before Source ingest)
+
+When your project provides a worktree bootstrap script, the engineering plan is authored inside a **lightweight, per-plan worktree** off `origin/main`, not in the primary checkout — the same convention `/brief-author` applies at the brief layer and `/plan-author` at the chunk layer. Engineering-plan authoring only ever writes markdown (the plan file), so the worktree is a plain `git worktree add` — it does **NOT** use the bootstrap script and provisions **no** dev-services stack, dependencies, or seed data (that heavy path is `/execute-plan`'s, for code that runs tests). This keeps the primary checkout clean and lets parallel authoring sessions run without racing on the shared tree.
+
+The provisioning happens after State load (which only touches the global `~/.claude/cache` sidecars) and before Source ingest, because Source ingest reads repo files (`brief.md`, `decisions.md`, any existing `engineering-plan.md`, `CLAUDE.md`, `schema.prisma`, `operations.graphql`, sibling engineering plans) and must resolve them inside the worktree when they are on `main`, or from the invocation checkout when they are not yet merged (see the cold-create fallback).
+
+### When it runs
+
+Provisioning runs unless ANY of the following holds, in which case this stage is a no-op and authoring proceeds **in place** (record the reason in the sidecar and verdict):
+
+- **`--no-worktree` was passed.**
+- **Already inside a linked worktree** — `git rev-parse --git-dir` differs from `git rev-parse --git-common-dir`. The session is already isolated in some `.worktrees/<name>`; write the plan there rather than nesting a worktree in a worktree.
+- **No worktree bootstrap script** — no executable bootstrap script exists at the repo root (`git rev-parse --show-toplevel`). This skill is global; the whole stage is a no-op elsewhere.
+
+### Worktree identity
+
+Deterministic, per-plan. Let `MAIN_ROOT` = `git rev-parse --show-toplevel`.
+
+- `WT_NAME` = `BRANCH` = `<feature>-ep` under the flat layout, `<feature>-<track>-ep` under the tracked one (one worktree per engineering plan, so a tracked feature's per-track plans never collide).
+- `WT_PATH` = `$MAIN_ROOT/.worktrees/$WT_NAME`.
+
+The `-ep` suffix names the artifact layer: it keeps this worktree distinct from `/brief-author`'s `<feature>-brief` worktree, `/plan-author`'s `<chunk-slug>-plan` worktrees, and `/execute-plan`'s `<chunk-slug>` implementation worktrees, and keeps `/cleanup-worktree`'s `-plan`-specific next-step hint (the ready-to-paste `/execute-plan` command) from firing on an engineering-plan branch.
+
+### Steps
+
+1. **Reuse guard.** If `$WT_PATH` already exists:
+   - its checked-out branch is `$BRANCH` (`<WT_NAME>`) → **adopt it**: re-anchor to `$WT_PATH`, skip creation. This is a re-author of the same feature's engineering plan.
+   - any other branch → REFUSE `EP_WORKTREE_COLLISION` (something else owns that path; the user resolves it — e.g. `/cleanup-worktree <WT_NAME>`).
+2. **Sync + pin the base (fresh create only).** `git -C "$MAIN_ROOT" fetch origin main`. Pin the branch to `origin/main` explicitly rather than forking off the shared checkout's current HEAD (the shared-tree branch-creation race): `git -C "$MAIN_ROOT" branch "$BRANCH" origin/main`. If `$BRANCH` already exists with no worktree (a leftover from an aborted run), reuse it; otherwise the branch is live elsewhere → REFUSE `EP_BRANCH_EXISTS`.
+3. **Create the worktree.** `git -C "$MAIN_ROOT" worktree add "$WT_PATH" "$BRANCH"`. Plain and fast — no bootstrap script, no DB/deps.
+4. **Re-anchor.** Set the working directory to `$WT_PATH` for Source ingest and every stage below. All repo reads (`brief.md`, `decisions.md`, existing `engineering-plan.md`, `CLAUDE.md`, `schema.prisma`, `operations.graphql`, sibling `features/*/engineering-plan.md` shape references) and the final engineering-plan write resolve inside `$WT_PATH`. The sidecars (`~/.claude/cache/author-state/`, `~/.claude/cache/review-state/`) and project-memory reads keep their absolute paths — they are outside the repo and unaffected.
+
+### Upstream presence (cold-create fallback)
+
+A per-plan worktree is a fresh branch off `origin/main`, so it carries `brief.md` / `decisions.md` only when they are already merged to `main`. At engineering-plan time the brief has frequently **not** merged yet — it is often still on its own `<feature>-brief` PR branch — so this fallback is a common path, not a rare one. When the worktree lacks the brief or decisions, do NOT treat the HARD-blocking source as missing: read `brief.md` / `decisions.md` from the **invocation checkout** by absolute path (so run the skill from a checkout that actually has them — the `<feature>-brief` branch, or an in-place draft), still write the new `engineering-plan.md` into the worktree, and surface a SOFT note in the verdict — the engineering plan should land on `main` via this branch's PR so downstream skills review against the real upstream. Record `engineering_plan_worktree.upstream_from: "invocation-checkout (cold-create fallback)"`. If neither the worktree nor the invocation checkout has `brief.md`, the Source-ingest HARD requirement fires and the skill refuses — an engineering plan without a brief is fan fiction.
 
 ---
 
@@ -240,21 +307,35 @@ Also read the brief-author sidecar `~/.claude/cache/author-state/<feature>__brie
 Hard requirements — skill refuses to run without:
 - `features/<feature>/brief.md` exists (brief is the bridge to the engineering plan).
 
-Read in this order:
+### Parent-spec resolution
+
+The engineering plan is grounded in its brief and in nothing above it. The spec reaches this layer through exactly one channel: the brief's `**Spec:**` header, resolved by **file presence, never by asking**. The header names a path; that path resolving to a file on disk is what engages every spec-layer step below.
+
+- **Header present and the path resolves** → that file is the parent spec. Read its `## Decomposition` and its decisions logs (step 2 and step 3 below), and record the path as `parent_spec` in the sidecar.
+- **No `**Spec:**` header** → no parent spec resolves. Record `parent_spec: null`, skip steps 2–4, and author against the brief alone — every spec-layer step below is a no-op and nothing else in the run changes. Do not go looking for a spec the brief did not claim, and do not ask which one — a brief with no header is a legacy brief, not an ambiguity.
+- **Header present but the path resolves to nothing** → record `parent_spec: "named but missing — <path>"`, skip steps 2–4, and file `OPEN_QUESTION` (HIGH) naming the header and the path — the same finding the reviewers file for the same shape. It is a brief claim about a real file and every spec-layer step anchors on it, so it is not the no-header case wearing different clothes: the two states are distinct and the sidecar records which one holds. Do not substitute a spec whose name looks close.
+- **Parent spec resolves but carries no `## Decomposition` section** → record `decomposition_stub: "absent"`, skip steps 2 and 4, and the no-annexation check is `not_applicable`. Boundary-binding is gated on the decomposition: a spec that draws no boundaries has none to bind, so step 3's logs are not read for boundary arbitration either. This is the whole of the degradation.
+
+Resolution is a targeted read, not a second grounding pass. The spec constrains the chunk DAG through its decomposition and its bound boundary calls; it never becomes the plan's source of Goals, which stay the brief's.
+
+### Read order
 
 1. `features/<feature>/brief.md` — every Goal and Non-goal goes into the invariants ledger as constraints the chunk DAG must honor.
-2. `features/<feature>/decisions.md` — every dated entry. Cross-chunk wiring decisions go into the decisions-closure table.
-3. `<plan-root>/engineering-plan.md` (when re-authoring) — current chunk DAG, a carry-forward constraint. Under the tracked layout, also read every **sibling track's** engineering plan: chunks this plan does not own may register into seams it does, and a boundary this plan assumes must match what the sibling claims. A mid-cycle `Status: needs-user-input` plan is resolved by the session agent applying blocker resolutions directly, not by re-running this skill.
-4. `CLAUDE.md` — banned patterns, business rules, schema-first / operations-first / multi-category architecture rules.
-5. `MEMORY.md` + project memory.
-6. The project's schema file (e.g., an ORM schema such as `schema.prisma`) — current schema; the engineering plan's schema-additions section must declare every new field/table/enum AND verify no naming collisions with existing fields.
-7. The project's API-contract file (e.g., a GraphQL or OpenAPI operations file) — current operations; user-facing changes naming API operations must verify the operation either exists or is an introduced_identifier.
-8. Sibling engineering plans (`features/*/engineering-plan.md` and `features/*/plans/*/engineering-plan.md`) — for shape/tone consistency. Pay attention to: section ordering, decisions-closure column shape, chunk-index column shape, dependency-graph rendering style.
+2. **The parent spec's `## Decomposition`** — this feature's scope stub (the slice the brief was cut from), the **Seams** with their split-line predicates, and the **Coverage** table dispositioning every spec unit to a brief slug or a named seam. The chunk DAG is cut inside that slice: the Coverage table is what the no-annexation check tests chunks against, and a seam's predicate is what places a chunk whose work sits near a boundary.
+3. **The parent spec's decisions logs** — `specs/<slug>/decisions.md` beside a per-system spec **and** the shared `specs/decisions.md` alongside it, read **nearest first** (the per-spec log wins where both bind the same call); root `decisions.md` beside a root spec that carries `## Decomposition`. Only `## Active (bound)` entries bind in any of them; a `superseded` / `obsolete` entry in the `## Archived` tail binds nothing. The logs split by subject: a call about which briefs exist or where a boundary sits lives in the spec's log; a call inside one feature's scope lives in the feature's log at step 5. Bound boundary and seam calls are constraints on the chunk DAG, never ground this layer re-litigates. A missing log is not an error — read what is there and carry on. A parent spec carrying no `## Decomposition` draws no boundaries, so nothing beside it is read as a parent-spec log here.
+4. **The spec sections the brief's inherited exclusions reference** — one targeted read per exclusion that points at a spec section by name. The brief's scope buckets are derived from the stub's exclusions, which frequently carry the exclusion by reference ("the seam with `<neighbour>`", "§Invariants — `<rule>`"); a chunk cannot be placed against a reference nobody resolved. Read the referenced section, not the spec.
+5. `features/<feature>/decisions.md` — every dated entry. Cross-chunk wiring decisions go into the decisions-closure table.
+6. `<plan-root>/engineering-plan.md` (when re-authoring) — current chunk DAG, a carry-forward constraint. Under the tracked layout, also read every **sibling track's** engineering plan: chunks this plan does not own may register into seams it does, and a boundary this plan assumes must match what the sibling claims. A sibling carrying the `/ep-close` closure marker is a sealed contract — consume its shipped surface as-is, and never draft a chunk, seam change, or deferral that lands new work in it; scope that would have gone there lands in this plan or a new track (`_plan-common/layout.md` § Closed engineering plans). A mid-cycle `Status: needs-user-input` plan is resolved by the session agent applying blocker resolutions directly, not by re-running this skill.
+7. `CLAUDE.md` — banned patterns, business rules, schema-first / operations-first / multi-category architecture rules.
+8. `MEMORY.md` + project memory.
+9. `backend/prisma/schema.prisma` — current schema; the engineering plan's schema-additions section must declare every new field/table/enum AND verify no naming collisions with existing fields.
+10. `mobile/src/graphql/operations.graphql` — current operations; user-facing changes naming GraphQL operations must verify the operation either exists or is an introduced_identifier.
+11. Sibling engineering plans (`features/*/engineering-plan.md` and `features/*/plans/*/engineering-plan.md`) — for shape/tone consistency. Pay attention to: section ordering, decisions-closure column shape, chunk-index column shape, dependency-graph rendering style.
 
 After reading, build:
 - **Invariants ledger** — every brief Goal, every Non-goal, every project-memory-bound rule. Format as bullet list with verification source.
-- **Identifier ledger** — every existing schema field, every existing API operation, every existing class/type/file path the brief or decisions.md mentions. The chunk DAG cross-references these.
-- **Decisions ledger** — every dated entry from `decisions.md`, indexed by (date, key). The decisions-closure table will cite these.
+- **Identifier ledger** — every existing schema field, every existing GraphQL operation, every existing class/type/file path the brief or decisions.md mentions. The chunk DAG cross-references these.
+- **Decisions ledger** — every dated entry from `decisions.md`, indexed by (date, key). The decisions-closure table will cite these. The parent spec's Active bound entries enter the ledger too, marked as spec-scope and flagged as constraints: a boundary or seam call there is settled, and the ledger carries it so the Draft stage can be checked against it rather than re-deciding it.
 
 ---
 
@@ -266,7 +347,7 @@ Mirror this section template (matches the shape of existing engineering plans):
 # <Feature Name> — Engineering Plan
 
 **Brief:** [`./brief.md`](./brief.md)
-<!-- Status frontmatter is OPTIONAL and binary. Set to `needs-user-input` ONLY when the engineering plan is mid-cycle (auto-managed by /engineering-plan-author NEEDS_USER_INPUT path). Otherwise omit entirely. Lifecycle states (Frozen, Archived) are derived from git state, not frontmatter. -->
+<!-- Status frontmatter is OPTIONAL. `needs-user-input` ONLY when the engineering plan is mid-cycle (auto-managed by /engineering-plan-author NEEDS_USER_INPUT path); `closed` ONLY via /ep-close (implementation complete — this skill never writes it and refuses a plan carrying it). Otherwise omit entirely. Other lifecycle states (Frozen, Archived) are derived from git state, not frontmatter. -->
 <!-- Status: needs-user-input -->  <!-- only when mid-cycle -->
 
 **Created:** <YYYY-MM-DD>
@@ -362,6 +443,7 @@ entire body is one line: `No threat-model surface — <reason>.`>
 
 - **One concern per chunk row.** Only self-disclosure (`\bN-concern\b`, `\bbundle\b`, `\bbundling\b`) auto-refuses at the deterministic Concern-lint gate. Conjunctions, comma lists, plus-separators, and multi-clause descriptions are NOT auto-refusal triggers — they fire false-positives on legitimate prose ("extract helper used in 12 sites and migrate callsites" is one concern; "add fieldA, fieldB, fieldC to User model" is one schema change). Concern judgment for these is semantic: the ai-development persona applies the halved-work test to each chunk row in Self-prosecution. Mutual load-bearing is shipping-order, not bundling.
 - **Every brief Goal maps to ≥1 chunk.** No orphan Goals. Cross-cutting infrastructure (rate limiters, error helpers, observability) maps to `### Supporting infrastructure` not a brief Goal (per `P-EP-BRIEF-GOALS`).
+- **Chunks are cut inside the slice the spec assigned this brief.** Where a parent spec with `## Decomposition` resolves, the Coverage table already dispositioned every spec unit, and the chunk DAG inherits that cut whole: no chunk implements surface the table assigns to a **sibling brief slug** or excludes by a **named seam**. When a chunk's work sits near a boundary, place it by that seam's split-line predicate — hand the predicate the chunk's concern and take the side it returns, rather than arguing the placement from what is convenient to build together. A chunk the predicate puts on the far side belongs to the sibling brief, and reaching for it is annexation however well it factors here. A seam whose predicate cannot place the chunk — it names no side for this concern, or it returns both — is the spec layer's defect rather than this plan's: file `SPEC_AMENDMENT_NEEDED` routed to `/spec-author`, naming the seam, quoting its predicate, and naming the chunk it could not place. Do not guess the side. With no spec or no decomposition, chunks are cut against the brief alone.
 - **Every chunk carries an intent, and Foundation carries an obligation.** `Foundation` (schema, types, scaffolding — no behavior change), `Behavior` (the user- or wire-visible change), `Hardening` (tests, error paths, observability), `Migration` (data/schema migration plus the runtime change safety requires). A `Foundation` chunk that no other chunk depends on ships dead code by definition — it changes no behavior and has no consumer — so either fold it into the chunk that consumes it or the label is wrong. `/plan-lint` FAILs the orphan case. A `Migration` chunk sequences *after* the runtime that makes the schema forward-compatible; a Migration chunk with no Foundation or Behavior dependency is almost always expand-then-contract inverted.
 - **Invariants are required; content is not.** Write the cross-chunk rules, or the single line `No cross-chunk invariants — <reason>.` Never manufacture filler to fill the section: a fake invariant with a fake Falsifier passes `/plan-lint` and teaches the next reader that the section is decoration. Each real invariant carries `Form:` (`test` | `assert` | `gate` | `doc`) and `Falsifier:` — the one check that would disprove it. If you cannot write the Falsifier, what you have is prose; either sharpen it into a rule or drop it. `Form: doc` on a rule in a high-risk class is an unenforced invariant and reads as one.
 - **Threat model is required; a disclaimer is a valid answer.** Populate it when the feature touches authentication, session or token lifetime, follow/block, writes to user-owned data, a public-vs-locked exposure boundary, external-data ingestion, or an LLM-mediated path. Otherwise state `No threat-model surface — <reason>.` The articulated decision is the deliverable — an empty table and a missing section read identically, and neither is an answer. Rows are specific to this feature; a paraphrased generic threat list is worse than the disclaimer because it looks like work. Each row's detection ties to an Invariants entry where one exists, and a threat with no falsifiable detection goes in `Residual risks:` rather than hiding in an empty cell.
@@ -374,10 +456,11 @@ entire body is one line: `No threat-model surface — <reason>.`>
 - **No false parallelism.** A chunk in Wave N must have all dependencies in Waves <N. The dependency graph is the source of truth; the wave numbering descends from it, not the other way around.
 - **Verified-by cells name chunk slugs.** Per `P-EP-VERIFIED-BY`. Never test files or test cases directly.
 - **Risk depth is bounded.** Per `P-EP-RISK-DEPTH`. Name risks, mitigations, rollback. Don't enumerate every possible failure mode.
-- **Drafted prose must not contradict bound decisions — class-aware.** Before emitting the in-memory draft to Plan-lint, scan every section (Brief mapping, Architecture summary, Decisions closure, Invariants, Field Precedence, Cost & Capacity, Operator-facing budgets, Chunk index descriptions, Manual gates, Dependency graph, Risks/unknowns, Rollout plan, Out of scope) for prose that contradicts an entry in `features/<feature>/decisions.md` whose `Status:` is `bound` (only Active-section `bound` entries — a `superseded`/`obsolete` entry in the `## Archived` tail no longer forces a rewrite; per `~/.claude/skills/_review-common/principles.md` § What counts as a bound entry). Per `_review-common/principles.md` § Cross-artifact authority order, the rule is class-aware:
+- **Drafted prose must not contradict bound decisions — class-aware.** Before emitting the in-memory draft to Plan-lint, scan every section (Brief mapping, Architecture summary, Decisions closure, Invariants, Field Precedence, Cost & Capacity, Operator-facing budgets, Chunk index descriptions, Manual gates, Dependency graph, Risks/unknowns, Rollout plan, Out of scope) for prose that contradicts a `Status: bound` entry in `features/<feature>/decisions.md` **or in the parent spec's decisions logs** — `specs/<slug>/decisions.md` and the shared `specs/decisions.md`, nearest first (only Active-section `bound` entries in any of them — a `superseded`/`obsolete` entry in the `## Archived` tail does not force a rewrite; per `~/.claude/skills/_review-common/principles.md` § What counts as a bound entry). Per `_review-common/principles.md` § Cross-artifact authority order, the rule is class-aware:
   - **Class B contradiction** (the draft contradicts a bound *wiring* decision — file path, schema column, module ownership, transaction boundary): bound decision wins. Rewrite the draft to match. If the contradiction is itself a discovery (new repo state invalidates the bound decision), surface as `OPEN_QUESTION` and the user re-arbitrates.
   - **Class A contradiction** (the draft asserts something a brief Goal or Non-goal forbids, even if a bound decision separately committed to it): the **brief wins**. Refuse to emit the section. Surface as `BRIEF_NONGOAL_TRESPASS` blocker — the bound decision is itself a defect that needs un-binding or brief amendment. Do not silently align with the bound decision; that resumes the accumulation pattern this rule exists to break.
-  The Self-prosecution carry-forward auto-retract handles persona findings reactively; the proactive write-side pair runs at the Brief-conformance gate (which spawns the Brief-conformance Prosecutor against the in-memory draft) and at this rule (which scans the draft against bound decisions before emission).
+  - **Boundary contradiction** (the draft's chunk placement contradicts an Active `Status: bound` entry in the **parent spec's** decisions logs — which briefs exist, where the seam between two of them sits): the bound call **wins and is never re-litigated at this layer**. Rewrite the placement to match it. Where the placement cannot be rewritten without moving the boundary itself, that is a blocker, not a draft decision: surface it as `OPEN_QUESTION` naming the bound entry and the chunk that crossed it, for `/spec-author` to re-cut. A *fix* that moves a bound boundary files `FIX_INTRODUCED_PREMISE_INVERSION` unless the director explicitly re-cut upstream first — re-cutting is `/spec-author`'s Seam alignment, and it supersedes the bound entry in the spec's log the usual two-step way.
+  The Self-prosecution carry-forward auto-retract handles persona findings reactively; the proactive write-side pair runs at the Brief-conformance gate (which spawns the Brief-conformance Prosecutor against the in-memory draft) and at this rule (which scans the draft against both logs' bound decisions before emission).
 
 ---
 
@@ -473,7 +556,7 @@ If a row matches AND has no applicable carry-forward, the gate is HARD-blocking 
 
 ### Patterns NOT enforced by this gate
 
-The earlier version enforced four additional syntactic patterns as auto-refuse triggers: ` AND ` conjunctions, three+ comma-separated noun phrases, `+ <noun> + <noun>` separators, and ≥2 independent clauses. They were dropped. Each had high false-positive rates on legitimate prose:
+Four syntactic patterns stay out of this gate: ` AND ` conjunctions, three+ comma-separated noun phrases, `+ <noun> + <noun>` separators, and ≥2 independent clauses. Each fires constantly on legitimate one-concern prose:
 
 - "Extract helper used in 12 sites and migrate callsites" is one concern (the migration is incomplete without the extraction).
 - "Add fieldA, fieldB, fieldC to the User model" is one schema change with three named columns.
@@ -485,12 +568,12 @@ Concern judgment for these cases is semantic, not syntactic. The ai-development 
 
 Run this only on a refusal-pattern match. It produces a deterministic decision: carry-forward applies, or it doesn't. Three sources are checked, in order; the first match wins.
 
-1. **Engineering-plan reviewer state.** Read `~/.claude/cache/review-state/<feature>__engineering-plan.json`. In `recently_resolved_blockers`, find an entry where ALL of:
+1. **Engineering-plan reviewer state.** Read `~/.claude/cache/review-state/<slug>.json` — `<slug>` per § Sidecar location, so a tracked feature consults its own track's state. In `recently_resolved_blockers`, find an entry where ALL of:
    - `path_or_section` substring-matches one of: the chunk slug; the chunk-index row's verbatim description; or `chunk-index row N` where N is the row's index position.
    - `blocker_class_when_resolved` is one of `CONCERN_GATE_FAILED`, `CHUNK_BUNDLE`, `MULTI_CONCERN`, `CONCERN_FACTORING` — OR the entry's `summary` field contains both a concern-family keyword (`bundle`, `concern`, `factoring`) and a resolution-direction keyword (`accept`, `bound`, `keep`, `retain`, `reaffirm`).
    - `carry_forward_until_round >= current_invocation_number` (cross-side number-line mapping per `_author-common/self-prosecution-protocol.md`).
 
-2. **Engineering-plan-author state.** Read this skill's own sidecar `~/.claude/cache/author-state/<feature>__engineering-plan.json`. Apply the same three-condition match against ITS `recently_resolved_blockers`.
+2. **Engineering-plan-author state.** Read this skill's own sidecar `~/.claude/cache/author-state/<slug>.json` (same `<slug>`). Apply the same three-condition match against ITS `recently_resolved_blockers`.
 
 3. **Engineering-plan decisions-closure scan.** Read the in-memory draft's `## Decisions closure` section. A row carries forward when ALL of:
    - The `Decision` column substring-matches the chunk slug or the row's verbatim description.
@@ -500,7 +583,7 @@ Run this only on a refusal-pattern match. It produces a deterministic decision: 
 
 If any source matches AND (when source 3 is the matching source) scope coverage passes, set `concern_lint_status: "carried_forward"` for the matched bundle's **local scope only**, append a `concern_lint_carry_forward_log` entry naming the source, blocker id (when applicable), `carry_forward_until_round`, the user's decision verbatim, AND the scope-coverage component list. Then run the residual-scope check below before declaring the row clean.
 
-**Residual-scope check (MANDATORY, runs after any carry-forward).** A successful carry-forward dismisses ONLY the matched bundle's local scope, not the entire row. After recording the carry-forward, rescan the row description for additional self-disclosure pattern matches that sit OUTSIDE the matched scope. For each additional match, repeat the three-source consultation independently. The row passes only when every self-disclosure match in the row has its own carry-forward path. A row containing one bound bundle and N residual unbound concerns refuses with `CONCERN_GATE_FAILED` naming the residual concerns — a single `decisions.md` row covering one component cannot dismiss a row enumerating N components. This is the leak the prior keyword-only match admitted: a decisions row binding "retirement-protocol bundle" carries forward only the retirement-protocol bundle, not the surrounding marker-infra + walker + registry concerns the same chunk row enumerates alongside it.
+**Residual-scope check (MANDATORY, runs after any carry-forward).** A successful carry-forward dismisses ONLY the matched bundle's local scope, not the entire row. After recording the carry-forward, rescan the row description for additional self-disclosure pattern matches that sit OUTSIDE the matched scope. For each additional match, repeat the three-source consultation independently. The row passes only when every self-disclosure match in the row has its own carry-forward path. A row containing one bound bundle and N residual unbound concerns refuses with `CONCERN_GATE_FAILED` naming the residual concerns — a single `decisions.md` row covering one component cannot dismiss a row enumerating N components. This is the leak a keyword-only match admits: a decisions row binding "retirement-protocol bundle" carries forward only the retirement-protocol bundle, not the surrounding marker-infra + walker + registry concerns the same chunk row enumerates alongside it.
 
 If no source matches (or residual-scope fails), refuse with `CONCERN_GATE_FAILED`. The verdict surfaces three actionable resolutions: rewrite the chunk-index row description to single-concern phrasing citing the decision (preferred); add an explicit `## Decisions closure` row arbitrating the bundle WITH scope coverage of every component; or re-run `/engineering-plan-review-v2` to record the arbitration in the reviewer state's `recently_resolved_blockers`.
 
@@ -573,8 +656,8 @@ Apply `_author-common/ground-truth-protocol.md`. At the engineering-plan layer:
 
 - **V2 (identifier) is dominant.** Every cross-chunk contract name (table, type, flag, file path of shared module) is either:
   1. Added to `introduced_identifiers` in the sidecar (the engineering plan introduces this; child chunks build it).
-  2. Verified to exist in the repo (the project's schema file, its API-contract file, source code).
-- **V4 (cross-document) is heavy.** Every brief-Goal quote in Brief Mapping is verified verbatim. Every decisions.md citation in Decisions-closure is verified by date + entry text. Every CLAUDE.md / project-memory rule the engineering plan invokes is verified.
+  2. Verified to exist in the repo (`schema.prisma`, `operations.graphql`, source code).
+- **V4 (cross-document) is heavy.** Every brief-Goal quote in Brief Mapping is verified verbatim. Every decisions.md citation in Decisions-closure is verified by date + entry text. Every CLAUDE.md / project-memory rule the engineering plan invokes is verified. Where a parent spec resolved, its citations clear the same bar as a brief Goal's: every spec-section reference resolves to that heading in that file, every `## Decomposition` scope-stub quote matches the stub verbatim, and every spec-log citation names an entry that exists in the `## Active (bound)` section. A citation of the spec is a claim about a real file like any other, and one the draft cannot verify is dropped or softened rather than carried.
 - **V3 (constraint) tests the dependency graph.** Each "X depends on Y" claim must be reflected in the chunk-index `Depends on` column AND in the dependency graph.
 
 Carve-out 1 (`introduced_identifiers`) is the dominant carve-out at this layer — engineering plans introduce more cross-chunk contract names than they reference existing ones.
@@ -592,7 +675,7 @@ Spawn five persona agents in parallel using the template in `_author-common/self
 - **architecture** — system-shape coherence, hidden dependencies, false parallelism, factoring.
 - **ai-development** — chunk discipline, plan-quality at engineering-plan layer, DAG cycles, position-encoded slugs.
 - **product** — brief drift, Goal mapping, Non-goal enforcement, scope creep.
-- **backend** — schema-additions correctness, API-operation introductions, decisions-closure on backend wiring.
+- **backend** — schema-additions correctness, GraphQL-operation introductions, decisions-closure on backend wiring.
 - **testing** — `Verified by` columns, gate-test coverage, chunk-internal-detail leakage in test references.
 
 Active critical pairs: universal pairs + engineering-plan-specific pairs (`P-EP-IMPL-DETAIL`, `P-EP-BRIEF-GOALS`, `P-EP-VERIFIED-BY`, `P-EP-RISK-DEPTH`, `P-EP-DECISION-LOC`).
@@ -617,6 +700,16 @@ The verdict gate uses this:
 - **APPROVED** ⇔ shape-correct AND `imagined_implementer.verdict == not_implementable` (one or more `IMPLEMENTABILITY_GAP`s remain — the engineering plan is fine, but per-chunk authoring is blocked until the user binds the gaps).
 - **NEEDS_USER_INPUT** ⇔ anything else.
 
+### No-annexation check (chunk grain; runs after the dry-run, before consolidation)
+
+Mechanical, and it runs only when a parent spec carrying `## Decomposition` resolved at Source ingest. Where the Coverage table exists, test every chunk-index row against it — the same check `/brief-author` runs one layer up, at chunk grain instead of Goal grain.
+
+The slug the table is read against is the brief's own: the feature directory name under `features/` **is** the slug, and it matches the brief's row in the spec's Briefs table (`~/.claude/skills/_spec-common/spec-format.md` § Scope stubs). A Coverage table with **no row for that slug** stops the check rather than failing every chunk in it: file exactly one `OPEN_QUESTION` naming the slug and the missing row, record `no_annexation: not_applicable`, and cut chunks against the brief alone for this run. One missing row is one finding — never one per chunk, and never a silent proceed. Either the brief names the wrong parent or the spec's decomposition never cut this brief, and both are answered upstream.
+
+For each chunk row, identify the spec units its work implements. Every one must be a unit the Coverage table dispositions to **this brief's slug**. A chunk implementing a unit the table assigns to a **sibling brief slug**, or excludes by a **named seam**, files `OPEN_QUESTION` (HIGH) naming three things: the unit, the slug or seam the table dispositions it to, and the chunk that reached for it. A chunk whose concern sits near a boundary is placed by that seam's split-line predicate; a chunk the predicate returns to the far side is the same finding.
+
+Do not widen the plan to absorb the unit and do not drop the chunk — which of the two is right is the director's call, and it is the one finding no reviewer downstream can make: the annexing plan traces its chunk to a real brief Goal, the annexed brief still traces its own, and both review clean while the unit ships twice or nowhere. A spec with no Coverage table skips the check. Record `no_annexation: not_applicable | clean | <N> claims` in the sidecar either way.
+
 ### Verdict template
 
 ```markdown
@@ -626,6 +719,7 @@ The verdict gate uses this:
 **Authoring mode:** ship | draft
 **Round:** <invocation_number>
 **Last engineering-plan sha:** <hex>
+**Parent spec:** <path> (from the brief's `Spec:` header) | none — brief carries no Spec header | named but missing — <path>; decomposition: ingested | absent
 
 ## Plan-lint
 **Status:** PASS | FAIL
@@ -640,6 +734,9 @@ The verdict gate uses this:
 **Claims total:** <N>
 **Verified:** <V>  **Softened:** <S>  **Corrected:** <C>  **Dropped:** <D>  **Restructured:** <R>  **Skipped (carve-out):** <K>
 **Introduced identifiers:** <count> (<comma-separated list, truncated>)
+**Bound decisions consulted:** <N> (feature log <n>, spec logs <m> — `specs/<slug>/decisions.md` + `specs/decisions.md`, or none)
+**Contradictions found:** Class A <n>; Class B <n>; boundary <n>
+**No-annexation:** not_applicable | clean | <N> claims
 
 ## Self-prosecution
 **Personas:** architecture, ai-development, product, backend, testing
@@ -662,7 +759,14 @@ The verdict gate uses this:
 - [FIX_INTRODUCED_PREMISE_INVERSION] <span> — <one-line>
 - [STRUCTURAL_LINT_FAILED] <plan-lint defect> — <one-line>
 - [CONCERN_GATE_FAILED] <chunk-index row> — <one-line; decomposition required>
-- [BRIEF_AMENDMENT_NEEDED] <gap> — <one-line>
+- [BRIEF_NONGOAL_TRESPASS] <chunk / section> — <one-line; brief Non-goal quoted>
+- [BRIEF_GOAL_UNDELIVERED] <brief Goal> — <one-line; no chunk delivers it>
+- [SURFACE_PARITY_GAP] <brief Goal> — <one-line; the narrowing axis and the shortfall>
+- [GOAL_VERIFICATION_GAP] <Goal / Non-goal / acceptance chunk> — <one-line; what proves it, or does not>
+- [CHUNK_SURFACE_EXCESS] <chunk-index row> — <one-line; the breached counts>
+- [FEATURE_SURFACE_EXCESS] <the DAG> — <one-line; the breached sub-metrics and the split proposal>
+- [BRIEF_AMENDMENT_NEEDED] <gap> — <one-line; the defect is the brief's own>
+- [SPEC_AMENDMENT_NEEDED] <gap> — <one-line; the contradiction originates in the spec — routed to `/spec-author`>
 - [UNCORROBORATED_RESET] <span> — <one-line>
 
 ### Implementability gaps (if APPROVED)
@@ -678,7 +782,7 @@ The verdict gate uses this:
   - Authoring mode is `ship` (not `--draft`).
   - Plan-lint PASS, Concern-lint PASS or CARRIED_FORWARD, Chunk-surface estimator PASS for every row, Imagined-Implementer verdict `implementable`.
   - Tier-1 weight = 0; Tier-2 weight ≤ 4 (polish floor).
-  - No `BRIEF_AMENDMENT_NEEDED`, `CONCERN_GATE_FAILED`, `CHUNK_SURFACE_EXCESS`, `STABLE_DISAGREEMENT`, `OPEN_QUESTION`, `IMPLEMENTABILITY_GAP`, `UNCORROBORATED_RESET`, `STRUCTURAL_LINT_FAILED`, `FIX_INTRODUCED_PREMISE_INVERSION`, `REPO_STATE_DRIFT`.
+  - No `BRIEF_NONGOAL_TRESPASS`, `BRIEF_GOAL_UNDELIVERED`, `SURFACE_PARITY_GAP`, `GOAL_VERIFICATION_GAP`, `BRIEF_AMENDMENT_NEEDED`, `SPEC_AMENDMENT_NEEDED`, `CONCERN_GATE_FAILED`, `CHUNK_SURFACE_EXCESS`, `FEATURE_SURFACE_EXCESS`, `STABLE_DISAGREEMENT`, `OPEN_QUESTION`, `IMPLEMENTABILITY_GAP`, `UNCORROBORATED_RESET`, `STRUCTURAL_LINT_FAILED`, `FIX_INTRODUCED_PREMISE_INVERSION`, `REPO_STATE_DRIFT`.
 
 - **APPROVED** ⇔ shape-correct (Plan-lint PASS, Concern-lint PASS or CARRIED_FORWARD, Chunk-surface estimator PASS for every row, no other blockers above) AND `imagined_implementer.verdict == not_implementable` AND one or more `IMPLEMENTABILITY_GAP` findings remain. Per-chunk plan authoring is **NOT** unblocked at APPROVED; the session agent binds the gaps via `decisions.md` and marks the plan CLOSED — the author is not re-invoked — before chunk authoring can begin.
 
@@ -708,7 +812,7 @@ Once the session agent has applied every resolution, it removes the entire `## P
 
 ## Hard rules
 
-- **Stage order is fixed.** Source ingest before Draft. Plan-lint before Concern-lint. Concern-lint before Ground-truth audit. Ground-truth audit before Self-prosecution and imagined-implementer. All before emission. `--draft` skips Plan-lint, Concern-lint, Ground-truth audit, and Self-prosecution.
+- **Stage order is fixed.** State load, then Engineering-plan-worktree provisioning (a no-op only under its own listed conditions), then Source ingest, then Draft. Plan-lint before Concern-lint. Concern-lint before Ground-truth audit. Ground-truth audit before Self-prosecution and imagined-implementer. All before emission. `--draft` skips Plan-lint, Concern-lint, Ground-truth audit, and Self-prosecution.
 - **Brief is HARD-blocking.** No brief.md → skill refuses to run.
 - **Plan-lint is HARD-blocking.** Failures must be fixed in-loop or surfaced as `STRUCTURAL_LINT_FAILED`; the draft cannot reach Concern-lint with structural defects.
 - **Concern-lint is HARD-blocking unless carry-forward applies.** Triggered only by self-disclosed bundling in chunk-index row descriptions (`\bN-concern\b`, `\bbundle\b`, `\bbundling\b`). The draft cannot reach Ground-truth audit with unsalvaged self-disclosed bundled rows. Catching at this layer prevents the cascade into multi-concern chunk plans. Other concern judgments (genuine bundling that the row description doesn't self-disclose) are handled semantically by the ai-development persona's halved-work test in Self-prosecution, NOT by this gate.
@@ -717,9 +821,11 @@ Once the session agent has applied every resolution, it removes the entire `## P
 - **Sidecar always written.** Every invocation, every verdict.
 - **Chunk-internal detail prohibition.** A draft that names test files, exact regex patterns, single-file function names in the engineering-plan body (outside of the sidecar's `introduced_identifiers` for cross-chunk contracts) is rejected by the architecture+ai-development persona prosecution.
 - **Decisions-closure completeness.** Every cross-chunk wiring decision the chunks reference must appear in the decisions-closure table. A reference without a closure entry is `IMPLEMENTABILITY_GAP`.
+- **The parent spec's bound decisions bind here too.** An Active `Status: bound` entry in the parent spec's decisions logs — `specs/<slug>/decisions.md` and the shared `specs/decisions.md`, nearest first — settles which briefs exist and where the boundary between two of them sits, and it is never re-litigated at this layer. A chunk placement that contradicts one is a blocker — `OPEN_QUESTION` naming the entry and the chunk that crossed it, for `/spec-author` to re-cut — never a placement the draft argues its way into. A *fix* that moves a bound boundary is `FIX_INTRODUCED_PREMISE_INVERSION` unless the director explicitly re-cut upstream first. The check has a verdict surface: `bound_decisions_consulted` counts both logs alongside the feature's own, and the boundary-contradiction count sits with the Class A / Class B counters, so a run that skipped the read is visible. Whether the logs bind at all is decided by file presence and by the decomposition: no `**Spec:**` header resolving to a real spec, no log beside that spec, or a spec carrying no `## Decomposition`, and the rule is a no-op.
+- **Amendments route upward one layer at a time.** Before filing `BRIEF_AMENDMENT_NEEDED`, ask where the contradiction actually originates. A defect that is genuinely the brief's own — a Goal it under-specifies, a Non-goal it should carry, a cohort it invented — keeps the brief class. A contradiction originating **upstream of the brief** — in the parent spec's `## Decomposition` (a seam, a Coverage assignment, a scope stub) or in the spec's prose — files `SPEC_AMENDMENT_NEEDED` routed to `/spec-author` instead, because amending the brief there papers over the layer that actually owes the change and the next brief cut from the same spec inherits the same contradiction. Never escalate past the spec: a contradiction whose root is a vision-layer rule reaches vision through the spec machinery (`/spec-author` files `VISION_AMENDMENT_NEEDED`), never from this layer.
 - **No banned content.** Same prohibited categories as `/brief-author` (addendum, review attribution, historical comparison, persona-attribution headers).
 - **Carry-forward respect.** Re-introducing a chunk the user removed in a prior invocation, or re-opening a decision the user closed, is `FIX_INTRODUCED_PREMISE_INVERSION`.
-- **Drafted prose must not contradict bound `decisions.md` entries — class-aware.** Before emitting the in-memory draft to Plan-lint, scan every section (Brief mapping, Architecture summary, Decisions closure, Invariants, Field Precedence, Cost & Capacity, Operator-facing budgets, Chunk-index descriptions, Manual gates, Dependency graph, Risks/unknowns, Rollout plan, Out of scope) for prose contradicting any `Status: bound` entry in `features/<feature>/decisions.md` (only Active-section `Status: bound` entries — a `superseded`/`obsolete` entry in the `## Archived` tail no longer forces a rewrite; per `~/.claude/skills/_review-common/principles.md` § What counts as a bound entry). Per `_review-common/principles.md` § Cross-artifact authority order, the rule is class-aware. **Class B contradictions** (bound wiring decision contradicts the draft on a file path / schema column / module ownership / transaction boundary): bound decision wins — rewrite the draft to match, OR surface as `OPEN_QUESTION` if the contradiction is a discovery. **Class A contradictions** (the draft asserts something a brief Goal or Non-goal forbids, even if a bound decision separately committed to it): the **brief wins** — refuse to emit the section and surface as `BRIEF_NONGOAL_TRESPASS`. The bound decision itself is the defect; do not silently align with it. The verdict template's `Ground-truth audit` block records `bound_decisions_consulted: <count>; class_B_contradictions_found: <count>; class_A_contradictions_found: <count>` so missing this step is visible. The Brief-conformance gate (which spawns the Brief-conformance Prosecutor) is the proactive write-side pair for Class A; the Self-prosecution carry-forward Priority 1 auto-retract handles persona findings reactively.
+- **Drafted prose must not contradict bound `decisions.md` entries — class-aware.** Before emitting the in-memory draft to Plan-lint, scan every section (Brief mapping, Architecture summary, Decisions closure, Invariants, Field Precedence, Cost & Capacity, Operator-facing budgets, Chunk-index descriptions, Manual gates, Dependency graph, Risks/unknowns, Rollout plan, Out of scope) for prose contradicting any `Status: bound` entry in `features/<feature>/decisions.md` **or in the parent spec's decisions logs** — `specs/<slug>/decisions.md` and the shared `specs/decisions.md`, nearest first (only Active-section `Status: bound` entries — a `superseded`/`obsolete` entry in the `## Archived` tail does not force a rewrite; per `~/.claude/skills/_review-common/principles.md` § What counts as a bound entry). Per `_review-common/principles.md` § Cross-artifact authority order, the rule is class-aware. **Class B contradictions** (bound wiring decision contradicts the draft on a file path / schema column / module ownership / transaction boundary): bound decision wins — rewrite the draft to match, OR surface as `OPEN_QUESTION` if the contradiction is a discovery. **Class A contradictions** (the draft asserts something a brief Goal or Non-goal forbids, even if a bound decision separately committed to it): the **brief wins** — refuse to emit the section and surface as `BRIEF_NONGOAL_TRESPASS`. The bound decision itself is the defect; do not silently align with it. The verdict template's `Ground-truth audit` block records `bound_decisions_consulted` across the feature log and both spec logs, alongside the Class A, Class B, and boundary contradiction counts, so missing this step is visible. The Brief-conformance gate (which spawns the Brief-conformance Prosecutor) is the proactive write-side pair for Class A; the Self-prosecution carry-forward Priority 1 auto-retract handles persona findings reactively.
 
 ---
 
@@ -734,6 +840,16 @@ Once the session agent has applied every resolution, it removes the entire `## P
 **Sidecar present, engineering-plan.md absent (deleted):** Treat as cold disk-state; consult sidecar history for prior arbitrations; surface in verdict that prior plan was deleted.
 
 **Brief amended since last invocation (brief sha changed in brief-author sidecar):** Hard re-author. The chunk DAG may need restructuring to honor new Goals or honor amended Non-goals. Surface every brief-driven structural change in the verdict.
+
+**Brief carries no `**Spec:**` header:** No parent spec resolves. Record `parent_spec: null`, skip the Decomposition read, the inherited-exclusion resolution, and the spec's decisions logs; the no-annexation check records `not_applicable`. Every stage then runs against the brief alone, and nothing outside the spec-layer steps changes. Do not ask which spec the feature belongs to and do not go hunting for one — the brief owns that claim, and a brief with no header is a legacy brief rather than an ambiguity.
+
+**The `**Spec:**` header names a file that is not on disk:** Record `parent_spec: "named but missing — <path>"`, skip the same steps, and file `OPEN_QUESTION` (HIGH) naming the header and the path. This is the dangling header, and it is not the no-header case: the brief made a claim about a real file that every spec-layer step would have anchored on, so it surfaces as a finding rather than a silent no-op.
+
+**Parent spec resolves but carries no `## Decomposition` section:** Record `decomposition_stub: "absent"` and proceed with no stub, no Coverage table, and no seams. Chunks are cut against the brief alone and the no-annexation check records `not_applicable`. Boundary-binding is gated on the decomposition, so the spec's logs bind nothing here either: a spec that draws no boundaries has none to bind. This is the whole of the degradation.
+
+**Parent spec's decisions logs absent:** Not an error, and not a refusal. Read whichever of `specs/<slug>/decisions.md` and `specs/decisions.md` is there and carry on; with neither, the transitive-bound-decisions rule is a no-op.
+
+**A chunk implements a spec unit the Coverage table gives a sibling brief:** `OPEN_QUESTION` (HIGH) from the no-annexation check. Do not widen the plan to absorb the unit and do not drop the chunk — the director picks, and the pick lands as a bound entry in the spec's log via `/spec-author`, not here.
 
 **Plan-lint surfaces a STRUCTURAL_LINT_FAILED that the orchestrator can't auto-fix in two passes:** Block emission; surface to user with the exact `/plan-lint` failure messages quoted.
 
@@ -750,5 +866,6 @@ Once the session agent has applied every resolution, it removes the entire `## P
 ## Relationship to sister skills
 
 - **Upstream: `/brief-author`.** The engineering-plan-author reads the brief and the brief-author sidecar. A brief layer change cascades; warm-mode carry-forward includes the brief-side `recently_resolved_blockers`.
+- **Above the brief: `/spec-author` and `/spec-review`.** They own the parent spec, its `## Decomposition`, and its decisions logs. Grounding here stays parental — the engineering plan is grounded in its brief and never reads `vision.md` — but the spec reaches this layer through the brief's `**Spec:**` header on three channels: the Coverage table the no-annexation check tests chunks against, the seam predicates that place a boundary-adjacent chunk, and the Active `Status: bound` boundary calls in its decisions logs, which bind **transitively** here and are never re-litigated. A boundary this plan cannot honor, and any contradiction originating in the spec rather than in the brief, goes back to that pair as `OPEN_QUESTION` / `SPEC_AMENDMENT_NEEDED`. This skill never edits the spec or its logs, and never routes past the spec to vision.
 - **Downstream: `/plan-author`.** The engineering-plan-author's CLOSED verdict unblocks per-chunk plan authoring. APPROVED does NOT (per the three-state semantic).
-- **Reviewer: `/engineering-plan-review-v2`.** The immediate next step after this author's first draft. Its `recently_resolved_blockers` are warm-mode constraints here. Author-side findings that match a reviewer-side blocker class share the class (BRIEF_AMENDMENT_NEEDED, IMPLEMENTABILITY_GAP, UNCORROBORATED_RESET, STABLE_DISAGREEMENT, OPEN_QUESTION, FIX_INTRODUCED_PREMISE_INVERSION, STRUCTURAL_LINT_FAILED, REPO_STATE_DRIFT).
+- **Reviewer: `/engineering-plan-review-v2`.** The immediate next step after this author's first draft. Its `recently_resolved_blockers` are warm-mode constraints here. Author-side findings that match a reviewer-side blocker class share the class (BRIEF_NONGOAL_TRESPASS, BRIEF_GOAL_UNDELIVERED, SURFACE_PARITY_GAP, GOAL_VERIFICATION_GAP, BRIEF_AMENDMENT_NEEDED, SPEC_AMENDMENT_NEEDED, CHUNK_SURFACE_EXCESS, FEATURE_SURFACE_EXCESS, IMPLEMENTABILITY_GAP, UNCORROBORATED_RESET, STABLE_DISAGREEMENT, OPEN_QUESTION, FIX_INTRODUCED_PREMISE_INVERSION, STRUCTURAL_LINT_FAILED, REPO_STATE_DRIFT), so the two gates exclude the same set.

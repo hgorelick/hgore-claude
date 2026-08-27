@@ -77,6 +77,9 @@ FORBIDDEN PATTERNS — do NOT do any of these:
   - Status / PR / Mode / Owner / Last-updated columns or fields. Frozen plans
     do not track. Your only columns in the chunk index are:
     Slug | Chunk | Code deps.
+    (One exception: the /ep-close closure marker — a `Status: closed` frontmatter
+    comment plus one header line, written only by that skill when implementation
+    completes. See ~/.claude/skills/_plan-common/layout.md § Closed engineering plans.)
   - Numbered chunk identifiers (`01`, `27a`, `Phase 2.b`) in the chunk index. Use
     slugs. (The on-disk plan filename's `NN-` prefix is not an identifier — it is an
     auto-assigned ordering affordance and never appears in the index or a slug.)

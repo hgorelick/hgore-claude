@@ -93,6 +93,7 @@ Before rendering, confirm each of these and state the result in the verdict. A f
 - Post-fix premise verification ran on every rewritten span.
 - The re-pass ran, or its three skip conditions all held.
 - The state file was written before the verdict was rendered.
+- The verdict banner script ran (with `--skill`) and its fenced stdout ends the response, with nothing after it — on every terminal path, refusals and aborts included.
 
 ## Forbidden fixes
 

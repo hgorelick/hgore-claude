@@ -21,7 +21,7 @@ The catch is unreliable when the *author* is asked to see it (the author who cho
 /scope-check <brief-path> <ep-path> [<ep-path> ...] [<decisions-path>]
 ```
 
-Resolve the engineering plan(s) per `~/.claude/skills/_plan-common/layout.md`: `features/<feature>/engineering-plan.md` when the feature is **flat**, or every `features/<feature>/plans/<track>/engineering-plan.md` when it is **tracked**. `brief.md` and `decisions.md` are always at the feature root.
+Resolve the engineering plan(s) per `~/.claude/skills/_plan-common/layout.md`: `features/<feature>/engineering-plan.md` when the feature is **flat**, or every `features/<feature>/plans/<track>/engineering-plan.md` when it is **tracked**. `brief.md` and `decisions.md` are always at the feature root. A plan carrying the `/ep-close` closure marker still counts toward delivered scope (it shipped), but a gap remedy must never add a chunk to it — route the remedy to an open sibling track, a new track, or a new feature (layout.md § Closed engineering plans).
 
 **A tracked feature is checked against the union of its plans, never one plan alone.** Scope-fidelity asks whether the *feature* delivers each Goal's full outcome. One track of a multi-track feature delivers a declared slice by construction, so judging it in isolation reports every other track's work as a narrowing — the check would produce nothing but false positives, and a director who learns to ignore it stops reading the real ones. Never invoke this skill on a single track of a tracked feature.
 

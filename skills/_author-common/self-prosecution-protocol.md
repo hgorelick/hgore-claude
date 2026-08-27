@@ -1,6 +1,6 @@
 # Self-prosecution protocol — personas attack your own draft
 
-Loaded by `/spec-author`, `/brief-author`, `/engineering-plan-author`, `/plan-author`. The hosting skill calls this AFTER ground-truth has run and the draft is anchor-clean. Output is a draft with the same fix categories the reviewer would have produced — but applied at write time, not surfaced to the user as a NEEDS_USER_INPUT verdict.
+Loaded by `/vision-author`, `/spec-author`, `/brief-author`, `/engineering-plan-author`, `/plan-author`. The hosting skill calls this AFTER ground-truth has run and the draft is anchor-clean. Output is a draft with the same fix categories the reviewer would have produced — but applied at write time, not surfaced to the user as a NEEDS_USER_INPUT verdict.
 
 The personas reused here are the same as the review-v2 personas (`personas/backend.md`, `personas/frontend.md`, `personas/architecture.md`, `personas/testing.md`, `personas/security.md`, `personas/product.md`, `personas/code-reviewer.md`, `personas/ai-development.md`). Same prosecution lens, different time horizon: instead of finding what's wrong with someone else's artifact, find what's wrong with what YOU just wrote.
 
@@ -10,6 +10,7 @@ The personas reused here are the same as the review-v2 personas (`personas/backe
 
 | Skill | Personas |
 |---|---|
+| `/vision-author` | product, architecture, plus the project's domain-ownership persona — the seat whose domain decides where a mechanism belongs (`game-design.md` in a game project). Per `~/.claude/skills/_vision-common/vision-format.md` § Personas; boundary questions at this layer are design-ownership questions, so that third seat is filled wherever the project has one |
 | `/spec-author` | product, architecture (internal consistency, domain-model soundness, invariant-ledger conformance applied to the root spec layer) |
 | `/brief-author` | product, ai-development (chunk discipline, plan-quality lens applied to the brief layer) |
 | `/engineering-plan-author` | architecture, ai-development, product, backend, testing |
@@ -48,9 +49,9 @@ Used by the author skill to spawn each self-prosecution agent. Substitute the br
 
 Every self-prosecution agent takes an explicit `model: "sonnet"` on the Agent call — never inherit the session model. Per `_review-common/principles.md` § Station model policy: the personas prosecute against verbatim-inlined rules with a fixed output schema, and the exclusion-challenge log makes their quality observable, so the execution tier suffices — while the authoring main thread (where factoring judgment lives) stays on the session model. The author skill records `persona_model: "sonnet"` in the sidecar; a recorded session-tier value here is a defect.
 
-The orchestrator constructs two of these slots ONCE in the main thread and substitutes the same text into every persona prompt, so N personas no longer each re-Read static files that never change between invocations:
+The orchestrator constructs two of these slots ONCE in the main thread and substitutes the same text into every persona prompt, so N personas do not each re-Read static files that never change between invocations:
 
-- `{inlined_rules_block}` — built by reading `_author-common/principles.md`, `_review-common/principles.md`, `_review-common/critical-pairs.md`, and the chunk-discipline / halved-work section of `personas/ai-development.md` once, then inlining those sections **verbatim and in full**. This replaces the four static-file reads each persona used to do.
+- `{inlined_rules_block}` — built by reading `_author-common/principles.md`, `_review-common/principles.md`, `_review-common/critical-pairs.md`, and the chunk-discipline section of `personas/ai-development.md` once, then inlining those sections **verbatim and in full**. The persona file is project-scoped, so the chunk-discipline section goes by whatever heading that project gave it (`## Chunking`, a halved-work rule, or equivalent) — inline the section that defines what one chunk is; a project whose persona file carries none is inlined without it, noted in the sidecar. This replaces four static-file reads per persona.
 - `{project_invariants_digest}` — the `project_invariants` list from the context-pack (`_author-common/context-pack-protocol.md`). This replaces each persona re-Reading `CLAUDE.md` for the project rules.
 
 One main-thread read each replaces one re-read per persona (5 personas × 3 skills × ~5 static files = the redundant-read tax this removes). The persona's OWN file is still Read live per agent — it is the lens, it is large, and it is persona-specific.
@@ -61,7 +62,7 @@ The orchestrator is a **pipe, not an editor**. Inlining exists to save the perso
 
 - Inline the **full** banned-rationalization list from both `principles.md` files. Not "the relevant ones."
 - Inline the **entire** `_review-common/critical-pairs.md` pair set. Do NOT pre-select an "active subset" — the file is small, and letting the persona judge which pairs bear on the draft is the whole point. `{active_critical_pair_subset}` is retained below only as a *hint* ("these are the pairs the hosting skill expects to bite"), explicitly non-exhaustive and explicitly non-binding.
-- Inline the chunk-discipline / halved-work section of `personas/ai-development.md` verbatim.
+- Inline the project persona file's chunk-discipline section verbatim, under whatever heading that project gave it.
 
 **Why this is a HARD requirement, not a style preference.** The author is the party being prosecuted. Any step where the author chooses *which rules the prosecutor is judged against* is a channel through which the author can — without any intent to deceive — quietly omit the exact rule that would catch its own draft. A digest is an editorial act; verbatim inlining is not. The cost delta is roughly 100 lines per persona prompt, which is noise against a run that spawns five prosecutors, and it buys the removal of the sharpest remaining bias channel in the self-prosecution loop.
 

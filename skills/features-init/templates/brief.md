@@ -1,8 +1,12 @@
 # <Feature Name> — Product Brief
 
-**Status:** Proposed | Active | Shipped | Archived
+**Spec:** specs/<slug>/spec.md | spec.md
 **Created:** YYYY-MM-DD
 **Last updated:** YYYY-MM-DD
+
+> `Spec:` names the parent spec this brief descends from — the one whose `## Decomposition` cut this brief out of it. A project with a single root `spec.md` and no `specs/` tree names that file.
+
+> The brief carries no lifecycle `Status:` field. Where the brief sits between Proposed and Archived is roster state, and it lives in `features/README.md`'s Brief roster — one row per brief, one place to read them all. The only `Status:` a brief ever carries is the mid-cycle `Status: needs-user-input` flag `/brief-author` sets and clears; a brief in any other state carries no `Status:` line at all.
 
 > Product briefs are high-altitude. Zero implementation detail. No file names, function names, schema, libraries, code paths, technical approaches, or "how." If you're tempted to explain *how* something works, that belongs in the engineering plan or a chunk plan. The brief answers *what* and *why* in language a non-engineer would understand.
 

@@ -23,10 +23,10 @@ This is the brief layer. Sister skills `/engineering-plan-review-v2` (engineerin
 
 **SPEC IS CANONICAL, PROJECT MEMORY IS LAW.** Two upstream sources bound this review:
 
-1. **`spec.md` and `context/specs/*.md`** are the product master-spec; brief Goals must trace to spec capabilities; brief Non-goals must not contradict spec promises.
-2. **`CLAUDE.md` and project memory** (`~/.claude/projects/<project>/memory/`) carry the project's bound invariants — "no test accounts in production data", "no existing users yet", "records must resolve correctly or not at all", domain-model architecture rules, etc. A brief that contradicts an invariant is solving a phantom problem; the prosecution surfaces this as a `FIX_INTRODUCED_PREMISE_INVERSION`-class finding even when it appears in the original draft (the "fix" was the brief author's act of writing the contradicting prose).
+1. **The parent spec** — `specs/<slug>/spec.md` or root `spec.md`, named by the brief's `Spec:` header and otherwise resolved by file presence — together with `context/specs/*.md`. Brief Goals must trace to spec capabilities; brief Non-goals must not contradict spec promises. Where the parent spec carries a `## Decomposition` section it says something stronger: which surface is *this* brief's. The Goals then sit inside the slice the Coverage table assigns this slug, and cover the outcomes its scope stub says the brief owes.
+2. **`CLAUDE.md` and project memory** (`~/.claude/projects/<project>/memory/`) carry the project's bound invariants — "no non-Latin person names", "no existing users yet", "linking has to be right or not done at all", category architecture rules, etc. A brief that contradicts an invariant is solving a phantom problem; the prosecution surfaces this as a `FIX_INTRODUCED_PREMISE_INVERSION`-class finding even when it appears in the original draft (the "fix" was the brief author's act of writing the contradicting prose).
 
-There is no equivalent of "REPO IS LAW" at the brief layer — briefs don't cite path:line or identifiers, so there's no on-disk code to ground claims against. Stage 1's verification target is the upstream documents (spec, CLAUDE, memory, decisions log), not the running codebase.
+There is no equivalent of "REPO IS LAW" at the brief layer — briefs don't cite path:line or identifiers, so there's no on-disk code to ground claims against. Stage 1's verification target is the upstream documents (the parent spec, CLAUDE, memory, and every decisions log), not the running codebase.
 
 ## Active critical-pair policies (brief layer)
 
@@ -34,7 +34,7 @@ These resolve oscillation hazards specific to brief review. The hosting skill ap
 
 **P-BRIEF-WHAT-NOT-HOW — Brief describes WHAT, engineering plan describes HOW.** The Solution / Goals / User-facing changes sections name product-visible shape and behavior, not architecture, file paths, schema changes, or implementation tactics. A finding demanding architecture detail / implementation specifics in the brief is invalid; a finding flagging implementation creep into the brief (e.g., file paths, function names, schema columns appearing in Solution) is valid.
 
-**P-BRIEF-GOAL-VERIFIABILITY — Each Goal must have a verifiable success criterion.** "Better discoverability" is invalid; "the home screen shows a 'recently active teammates' row above the task list" is valid. A finding requesting more specific *implementation* of a Goal is invalid (that's engineering-plan territory); a finding requesting a verifiable success criterion for a vague Goal is valid.
+**P-BRIEF-GOAL-VERIFIABILITY — Each Goal must have a verifiable success criterion.** "Better discoverability" is invalid; "the home screen shows a 'recently ranked by friends' row above the watchlist" is valid. A finding requesting more specific *implementation* of a Goal is invalid (that's engineering-plan territory); a finding requesting a verifiable success criterion for a vague Goal is valid.
 
 **P-BRIEF-GOAL-OUTCOME-SCOPE — Goals state outcomes, name their domain, and name their authoritative signal.** Three failure shapes, all valid findings (see `principles.md` § Outcome-scope parity). (1) A Goal phrased as a bare mechanism — "using an allowlist/ML approach", "via a dedupe step", "with an LLM pass" — is a finding: the technique is satisfiable on one surface while the outcome ships on none whole. The fix is to rewrite the Goal as the observable result, NOT to demand more implementation detail (that would contradict P-BRIEF-WHAT-NOT-HOW; the mechanism moves to the engineering plan, it does not get expanded in the brief). This rule is the *durable* fix and is load-bearing: the engineering-plan-layer Scope-fidelity Adversary is defeated by a mechanism-phrased Goal — a reader taking the mechanism words literally-disjunctively acquits a plan that ran one technique on one surface and another on another. The downstream parity check only becomes reliable once the Goal is outcome-phrased, so this is a finding to hold firm on, not a stylistic nicety. (2) A Goal carrying a domain quantifier ("every", "across", "all", "any", "going forward", "at every surface") that does not name the domain it ranges over — which surfaces, media types, call paths, cohorts — is a finding: an unnamed domain cannot be checked for coverage downstream, so a subset delivery passes review and the gap surfaces only at PR review or as a half-shipped feature. (3) A Goal whose outcome must be judged on a distinguished signal — "the same junk verdict that governs the purge", "judged on the work itself", "on the restored author links" — that does not name that authoritative signal is a finding: without it named, the downstream adversary cannot detect delivery on a weaker-substitute proxy or an irreversible action taken before the signal exists. A finding demanding the domain or signal be named is valid; a finding demanding an exact enumeration the brief author cannot know yet (e.g., every file path) is invalid — the domain and signal are product-level (surfaces, cohorts, media types, "the confident classifier verdict"), not implementation-level.
 
@@ -44,7 +44,7 @@ These resolve oscillation hazards specific to brief review. The hosting skill ap
 
 **P-BRIEF-NON-GOAL-REALITY — Non-goals must be plausible scope kills, not platitudes.** ("Non-goal" throughout this skill means any entry in the three exclusion buckets — `Intentionally deferred`, `Not in scope (this release)`, `Not planned` — or, on a legacy brief, the bare `## Non-goals` list.) "We won't break existing things" is a platitude (no feature plans to break things). "We won't change the friend-graph data model" is a real scope kill if the feature could plausibly require such a change. A finding flagging platitude Non-goals is valid; a finding demanding more Non-goals when the existing list already covers the plausible scope-creep surface is invalid.
 
-**P-BRIEF-PROBLEM-CONCRETENESS — Problem statement names a user-visible failure with quantified cohort or observable behavior.** "Users want better X" is invalid (no quantification, no cohort). "~400 active vendors are missing from search results because the upstream ingest does not hydrate their canonical IDs" is valid. A finding requesting concreteness on a vague problem is valid; a finding demanding implementation detail in the problem statement is invalid (Problem describes the failure, not the fix).
+**P-BRIEF-PROBLEM-CONCRETENESS — Problem statement names a user-visible failure with quantified cohort or observable behavior.** "Users want better X" is invalid (no quantification, no cohort). "~400 prolific authors are missing from search results because the upstream ingest does not hydrate their canonical IDs" is valid. A finding requesting concreteness on a vague problem is valid; a finding demanding implementation detail in the problem statement is invalid (Problem describes the failure, not the fix).
 
 **P-BRIEF-OPEN-QUESTION-FORM — Open questions are questions, not statements.** "We need to decide whether X" is a statement (re-cast as Goal or Non-goal); "How do we handle X when Y?" is a question. A finding flagging statement-as-question form is valid; a finding demanding answers to legitimately open questions is invalid (the user resolves outside the brief; that's not a brief defect).
 
@@ -54,14 +54,15 @@ These resolve oscillation hazards specific to brief review. The hosting skill ap
 
 From `~/.claude/skills/_review-common/blocker-classes.md`:
 
-- `STRUCTURAL_SHAPE_FAILED` — brief-layer equivalent of `STRUCTURAL_LINT_FAILED`. Stage 0 short-circuited the review because required sections are missing, banned content categories appeared, or frontmatter is malformed. The brief is unprosecutable until shape is fixed.
+- `STRUCTURAL_LINT_FAILED` — `/plan-lint --type brief` exited 1. Stage 0's lint gate short-circuited the review before the inline shape check ran.
+- `STRUCTURAL_SHAPE_FAILED` — Stage 0's inline shape check short-circuited the review because required sections are missing, banned content categories appeared, or frontmatter is malformed. The brief is unprosecutable until shape is fixed.
 - `STABLE_DISAGREEMENT` — two personas filed contradictory fixes on the same brief span.
-- `OPEN_QUESTION` — a finding the orchestrator cannot auto-resolve (typically: a brief Goal contradicts spec.md, and the user must arbitrate "amend the brief or amend the spec?").
+- `OPEN_QUESTION` — a finding the orchestrator cannot auto-resolve (typically: a brief Goal contradicts the parent spec, and the user must arbitrate "amend the brief or amend the spec?"). Also the class for a Goal that annexes a sibling brief's surface — which brief owns the unit is a director call, and applying either answer here would re-cut a boundary the spec bound.
 - `FIX_INTRODUCED_PREMISE_INVERSION` — orchestrator's applied fix rewrote brief prose that asserts a claim about the spec, project memory, or category invariants, but the claim does not survive verification. Working tree dirty.
 - `POLISH_PLATEAU` — Tier-2 weight non-zero but ≤ floor (4). Non-blocking.
 - `REPO_STATE_DRIFT` — `git rev-parse HEAD` changed mid-review. User re-runs.
 
-`STRUCTURAL_SHAPE_FAILED` is the brief-layer-only class. Briefs don't run through `/plan-lint`, so the shape check lives inline in Stage 0 and emits this class on failure. The class is registered in `_review-common/blocker-classes.md` under §Brief-only.
+`STRUCTURAL_SHAPE_FAILED` is the brief-layer-only class, registered in `_review-common/blocker-classes.md` under §Brief-only. It covers what the linter cannot: a brief is prose, so section presence, banned content categories, and implementation creep are read inline in Stage 0 after `/plan-lint --type brief` has cleared the mechanical floor. Two gates, two classes, in that order.
 
 ## Usage
 
@@ -122,7 +123,8 @@ Load each from `personas/{name}.md`. Reviewed by every listed persona in paralle
 Status-frontmatter check         (deterministic, hard short-circuit, runs first)
    ↓ Status: needs-user-input → REFUSE, point user back at /brief-author; stop
 Stage 0: Structural Shape Check  (deterministic, hard short-circuit)
-   ↓ verifies required sections, banned-pattern absence, frontmatter shape;
+   ↓ runs /plan-lint --type brief; FAIL → emit STRUCTURAL_LINT_FAILED, stop
+   ↓ then verifies required sections, banned-pattern absence, frontmatter shape;
    ↓ FAIL → emit STRUCTURAL_SHAPE_FAILED, stop
 Round Memory Pass                (deterministic, no LLM judgment)
    ↓ loads ~/.claude/cache/review-state/<feature>__brief.json;
@@ -132,8 +134,10 @@ Round Memory Pass                (deterministic, no LLM judgment)
    ↓ computes round_number, prior_blockers, recently_resolved_blockers
 Stage 1: Ground truth pass       (deterministic, mostly mechanical;
                                   Stage 1d carve-out is light LLM judgment)
-   ↓ produces audit_report grounding brief claims in spec / CLAUDE / memory /
-   ↓ decisions log; NO repo grep (briefs don't cite paths or identifiers)
+   ↓ produces audit_report grounding brief claims in the parent spec (its body,
+   ↓ its Decomposition stub + Coverage table) / CLAUDE / memory / every decisions
+   ↓ log (feature, parent spec, shared specs/); NO repo grep (briefs don't cite
+   ↓ paths or identifiers)
 Stage 2: Persona prosecution     (LLM judgment, M parallel agents)
    ↓ when sidecar present, prepends a directive listing author-verified claims
    ↓ so personas skip re-prosecuting them;
@@ -185,18 +189,37 @@ The check is deterministic and runs before any LLM judgment.
 
 ## Stage 0 — Structural Shape Check (MANDATORY, HARD SHORT-CIRCUIT)
 
-Briefs don't run through `/plan-lint` (which is plan-shaped). The shape check lives inline.
+Stage 0 has two halves, run in order: the deterministic lint floor, then the inline shape check that covers what the linter cannot judge.
+
+### Structural Lint Gate
+
+```bash
+python3 ~/.claude/skills/plan-lint/lint.py --type brief features/<feature>/brief.md
+```
+
+`--type brief` is the brief layer's deterministic floor — Goals with no `Measured by:` clause, undestined deferrals, the legacy bare `## Non-goals` shape. Run it first, exactly as the sister reviewers run the linter ahead of their own gates, so the mechanical defects are named by the tool that names them identically every time.
+
+- **Exit 0** → record `lint_clean=true` and run the inline shape check below.
+- **Exit 1 (FAIL)** → stop. Emit `STATUS: NEEDS USER INPUT (blocker: STRUCTURAL_LINT_FAILED)` with the verbatim linter output and the same "persona prosecution is not run" note the HARD short-circuit below carries. No further stages run.
+- **Exit 2 (usage / IO error)** → stop and report.
+
+WARNs do not block; they carry into the verdict's structural-lint summary alongside Stage 0's SOFT findings.
 
 ### Required sections (in order)
 
-The template at `features/_template/brief.md` is the source of truth. Apply these checks:
+The template at `features/_template/brief.md` is the source of truth — it carries the `Spec:` header and the two dates, and no lifecycle `Status:` field (lifecycle is roster state, held in `features/README.md`'s Brief roster). Apply these checks:
 
-1. **Frontmatter** — `Created:` and `Last updated:` dates present (YYYY-MM-DD). `Status:` field is OPTIONAL — present only when the brief is mid-cycle (`Status: needs-user-input`); absent on an APPROVED brief. Frontmatter that has any other `Status:` value is a SOFT MEDIUM finding (the author skill should have removed it on APPROVED emission).
+1. **Frontmatter** — `Created:` and `Last updated:` dates present (YYYY-MM-DD). `Status:` field is OPTIONAL — present only when the brief is mid-cycle (`Status: needs-user-input`); absent on an APPROVED brief. Frontmatter carrying a lifecycle value (`Proposed`, `Active`, `Shipped`, `Archived`) or any other `Status:` value is a SOFT MEDIUM finding: the roster owns that state, and a second copy in the brief goes stale the day the roster moves. Stage 1e strips it.
+   **`Spec:` header** — names the parent spec this brief descends from. Whether it is required is decided by **file presence**, never by asking, and the layout that decides it is the same one `/brief-author` resolves against:
+   - **A `specs/` tree holding more than one spec folder** → the header is REQUIRED. There is no presence-based answer with several candidates, and a reviewer that guesses anchors every Goal in Stage 1a against a spec the brief never claimed. Missing → `[HARD: parent spec unresolvable]`.
+   - **A `specs/` tree holding exactly one spec folder, OR a root `spec.md` carrying `## Decomposition`** → the parent resolves by presence, so a missing header is SOFT LOW recommending it be added; resolve the parent by presence and carry on with every stage below.
+   - **A root `spec.md` with no `## Decomposition`, or no spec at all** → legacy layout. The header is optional and its absence is not a finding. This is the whole of the degradation: in that layout the review anchors on the spec body alone, and every stage below runs unchanged.
+   - **Header present in any layout** → the path it names must resolve to a file on disk. A `Spec:` line pointing at nothing is `[HARD: Spec header names a file that does not exist]` — it is the one brief claim about a real file that Stage 1 cannot recover from, because every trace below anchors on it.
 2. **`## Problem`** — section heading present; body non-empty.
 3. **`## Solution`** — section heading present; body non-empty.
 4. **`## Goals`** — section heading present; ≥1 bullet. Every bullet carries a `Measured by:` clause (P-BRIEF-GOAL-MEASURE); a bullet without one is `[HARD: Goal has no completeness check]`.
 5. **`## Scope`** — section heading present, with the four `###` buckets: `In scope`, `Intentionally deferred`, `Not in scope (this release)`, `Not planned`. A bucket may be empty; the heading may not be missing, because an absent bucket and a deliberately-empty one read identically. Every `Intentionally deferred` bullet names a destination (`#NNN` or a follow-on feature slug) — a bullet without one is `[HARD: undestined deferral]` per P-BRIEF-SCOPE-BUCKETS.
-   **Legacy shape.** A brief carrying a bare `## Non-goals` section instead predates the four-bucket convention. Treat it as the `Not planned` bucket and file ONE SOFT LOW finding recommending migration on the next substantive edit — do not file per-bullet findings, and do not sort the bullets into buckets as an auto-fix. Which bucket a settled exclusion belongs in is a product call per item; guessing it silently re-decides scope, which is the failure this whole section exists to prevent. If the correct bucket for an item is genuinely load-bearing to this review, raise it as `OPEN_QUESTION`.
+   **Legacy shape.** A brief carrying a bare `## Non-goals` section in place of the four buckets is the legacy shape. Treat it as the `Not planned` bucket and file ONE SOFT LOW finding recommending migration on the next substantive edit — do not file per-bullet findings, and do not sort the bullets into buckets as an auto-fix. Which bucket a settled exclusion belongs in is a product call per item; guessing it silently re-decides scope, which is the failure this whole section exists to prevent. If the correct bucket for an item is genuinely load-bearing to this review, raise it as `OPEN_QUESTION`.
 6. **`## User-facing changes`** — section heading present; body non-empty (may be "ships a database snapshot, no live UX changes" for backfill features).
 7. **`## Open questions`** — section heading present; body is `None.` OR ≥1 question (in question form per P-BRIEF-OPEN-QUESTION-FORM, judged by Stage 2).
 
@@ -236,6 +259,7 @@ These signal the brief drifted into engineering-plan territory. Same fenced-bloc
 ```
 # Path:line citations → HARD per occurrence
 # Alternation is longest-first per the global longest-first rule (matters for `.tsx` vs `.ts`).
+# Not applied to the frontmatter `Spec:` header line — see the exemption below.
 [a-z_/]+\.(tsx|prisma|toml|yaml|json|md|ts|js|sql)(:[0-9]+)?
 
 # Function/identifier signatures → HARD per occurrence
@@ -252,6 +276,8 @@ These signal the brief drifted into engineering-plan territory. Same fenced-bloc
 Cohort references like "the `externalId` field" in Problem/Solution prose context are NOT matches — the schema-column regex requires the literal noun (`column` / `field` / `enum`) to precede the quoted identifier, so prose mentions of "the `externalId` field" in a Problem statement don't fire (no `column` or `enum` precedes the quoted token there).
 
 The path-citation regex is applied to brief prose with backtick-fenced spans excluded. A reference like `` `src/lib/externalApi.ts` `` inside a sentence is fine; an unfenced `src/lib/externalApi.ts:42` is HARD.
+
+**The frontmatter `Spec:` header line is exempt from the path-citation scan.** That line's whole job is to name a spec file, so the one path citation this suite *mandates* would otherwise be the one it hard-fails. Skip the line — both `**Spec:** specs/typing-system/spec.md` and `**Spec:** spec.md` pass, fenced or bare. The exemption is scoped to that single line and to no other pattern: a spec path in Problem or Solution prose is still HARD, and the header's own path is still checked for existence by the required-sections rule above.
 
 ### Behavior
 
@@ -294,7 +320,7 @@ Location, schema, load rules, capture priority, and persist rules: `~/.claude/sk
 
 - **Slug** — `<feature>__brief`, from `features/<feature>/brief.md`.
 - **Extra field** — `author_sidecar_consulted: { sidecar_path, sidecar_present, claims_verified_skipped, self_prosecution_findings_skipped }`, written every round per the consultation below.
-- **Blocker classes seen here** — `STRUCTURAL_SHAPE_FAILED`, `BRIEF_SCOPE_BUNDLE`, `FEATURE_NONCONVERGENCE`, `REMEDIATION_INCOMPLETE`, `DECISIONS_PROVENANCE_GAP`, plus the universal `STABLE_DISAGREEMENT` / `OPEN_QUESTION` / `FIX_INTRODUCED_PREMISE_INVERSION`. The last two are filed by the Remediation-completeness sub-pass below and are **exempt from `recently_resolved_blockers` carry-forward** — each is an assertion about the completeness of the carry-forward record itself, so retracting it against that record is circular. `DECISIONS_PROVENANCE_GAP` is additionally exempt from decisions-log-first retraction.
+- **Blocker classes seen here** — `STRUCTURAL_LINT_FAILED`, `STRUCTURAL_SHAPE_FAILED`, `BRIEF_SCOPE_BUNDLE`, `FEATURE_NONCONVERGENCE`, `REMEDIATION_INCOMPLETE`, `DECISIONS_PROVENANCE_GAP`, plus the universal `STABLE_DISAGREEMENT` / `OPEN_QUESTION` / `FIX_INTRODUCED_PREMISE_INVERSION`. The last two are filed by the Remediation-completeness sub-pass below and are **exempt from `recently_resolved_blockers` carry-forward** — each is an assertion about the completeness of the carry-forward record itself, so retracting it against that record is circular. `DECISIONS_PROVENANCE_GAP` is additionally exempt from decisions-log-first retraction.
 - **Extra field** — `remediation_completeness`, the per-blocker result of the sub-pass below. One entry per prior-round blocker, never sampled.
 
 ### Author sidecar consultation (brief-layer-unique)
@@ -339,12 +365,12 @@ The brief layer has NO repo grep — briefs don't cite path:line or identifiers 
 
 ### 1a. Spec trace (mechanical)
 
-Open `spec.md` (project root) and any `context/specs/*.md` whose subject matches the feature.
+Open the **parent spec** — the file the brief's `Spec:` header names, or the one Stage 0 resolved by presence — and any `context/specs/*.md` whose subject matches the feature.
 
 For each Goal in the brief, search the spec(s) for an anchor:
 
-- **Strong anchor** — spec section explicitly names the same capability (e.g., brief Goal "5-review activation threshold" → spec.md §"Activation-threshold rule").
-- **Implicit anchor** — spec section implies the capability (e.g., brief Goal "cart auto-clear" → spec.md §"Checkout flow" mentions "checkout removes items from the cart atomically").
+- **Strong anchor** — spec section explicitly names the same capability (e.g., brief Goal "5-item ranking threshold" → spec.md §"Score-locking threshold").
+- **Implicit anchor** — spec section implies the capability (e.g., brief Goal "watchlist auto-remove" → spec.md §"Ranking flow" mentions "ranking removes from watchlist atomically").
 - **No anchor** — Goal has no trace in any spec. Either the brief invented capability the spec doesn't authorize (HARD: out-of-spec Goal) OR the spec is missing a section the brief assumes (SOFT: spec amendment may be needed; surface as `OPEN_QUESTION` if the user must arbitrate).
 
 For each Non-goal in the brief, check whether it contradicts a spec capability:
@@ -367,6 +393,28 @@ Non-goals → spec contradiction check:
 - "<verbatim Non-goal>" → ❌ contradicts spec.md §<heading>: "<verbatim spec phrase>"  [HARD: contradicts spec]
 ```
 
+**Decomposition trace (mechanical; runs only when the parent spec carries `## Decomposition`).** The anchor check above asks whether a Goal traces to the spec at all. This asks the sharper question the Coverage table can answer: whether it traces to *this brief's* row. A spec with no `## Decomposition` section skips the trace entirely and records `decomposition_trace: N/A — spec carries no decomposition`; nothing else in Stage 1 changes.
+
+Read the section's **Scope stubs** block for this brief's slug and its **Coverage** table in full. The brief's slug is its feature directory name under `features/`, and that same string is its row in the parent spec's Briefs table — `~/.claude/skills/_spec-common/spec-format.md` § The Decomposition section states the convention, and every lookup here is an exact match on it. Then run both directions:
+
+- **No annexation (forward).** For each Goal, identify the spec units it claims — the invariants, feature areas, and terms its outcome ranges over. Every one must be a unit the Coverage table dispositions to **this slug**. A Goal claiming a unit the table assigns to a **sibling brief**, or excludes by a **named seam**, is `[HARD: annexes <slug>'s surface]` → escalate as `OPEN_QUESTION` naming the unit, the disposition the table gives it, and the Goal that reached for it. Do not widen this brief's stub and do not delete the Goal: which of the two is right is the director's call. This is the finding no other stage can make — the annexing brief traces its Goal to a real spec unit and passes 1a's anchor check, the annexed brief still traces its own, and both briefs review clean while the unit ships twice or nowhere.
+- **Outcomes delivered (inverse).** For each *outcome owed* in this brief's scope stub, find the Goal that delivers it. An outcome no Goal delivers is `[HARD: outcome owed undelivered]` — the brief silently narrowed against the slice the spec cut for it. When the stub states the outcome unambiguously and nothing in the brief's Scope excludes it, Stage 1e restores it as a Goal in the brief's voice; when the brief's Scope buckets exclude it, or the outcome needs a product call to phrase, escalate as `OPEN_QUESTION`. Run this direction only against the stub's own outcomes — it is cheap because the stub is a short enumerated list, and it stops at the stub's edge.
+
+The forward direction is the load-bearing one and runs on every Goal. Both are substring-and-enumeration work against two authored lists; neither is a judgment call, so neither belongs to Stage 2.
+
+```
+### Decomposition Trace
+Parent spec: <path>   Slug claimed: `<brief-slug>`
+Coverage rows for this slug: <count>   Outcomes owed: <count>
+Goals → claimed units:
+- "<verbatim Goal>" → claims "<unit>" → Coverage: `<this-slug>` ✅
+- "<verbatim Goal>" → claims "<unit>" → Coverage: `<sibling-slug>`  [HARD: annexes <sibling-slug>'s surface]
+- "<verbatim Goal>" → claims "<unit>" → Coverage: excluded by <seam name>  [HARD: annexes excluded surface]
+Outcomes owed → delivering Goal:
+- "<verbatim outcome owed>" → delivered by "<verbatim Goal>"
+- "<verbatim outcome owed>" → ❌ no Goal delivers it  [HARD: outcome owed undelivered]
+```
+
 ### 1b. CLAUDE.md and project memory consistency (mechanical)
 
 Read `CLAUDE.md` and every memory file under `~/.claude/projects/<project>/memory/` whose `description` field hints at relevance (substring match against the feature name, the brief's Solution paragraph keywords, or the brief's section bodies).
@@ -376,8 +424,8 @@ For each memory entry that may bear on the brief:
 - **Brief honors the invariant** → no finding.
 - **Brief contradicts the invariant** → HARD: contradicts project memory. Cite verbatim. Examples:
   - Memory says "no existing users yet" + brief says "existing users will need migration" → contradiction.
-  - Memory says "usernames are ASCII-only" + brief Goal says "support emoji usernames" → contradiction.
-  - CLAUDE.md says "sessions expire after 30 minutes idle" + brief Goal says "sessions never expire" → contradiction.
+  - Memory says "no non-Latin person names" + brief Goal says "support Cyrillic author names" → contradiction.
+  - CLAUDE.md says "5-item threshold; scores locked until 5 rankings" + brief Goal says "scores update from the first ranking" → contradiction.
 - **Brief silent on the invariant** → no finding (silence is not contradiction).
 
 Output a `Project Memory Consistency` block:
@@ -396,7 +444,17 @@ Honored invariants:
 
 ### 1c. Decisions log consistency (mechanical)
 
-Read `features/<feature>/decisions.md` if it exists. For each dated entry (only Active bound entries are consulted — skip the `## Archived (superseded / obsolete)` tail; per `~/.claude/skills/_review-common/principles.md` § What counts as a bound entry):
+Read **three** logs, all consulted the same way and all Active-bound-only:
+
+1. `features/<feature>/decisions.md` — the feature's own log.
+2. **The parent spec's log** — `specs/<slug>/decisions.md` beside a per-system spec, root `decisions.md` beside a root spec.
+3. **The shared spec log** — `specs/decisions.md`, holding the calls that range across specs rather than sitting inside one.
+
+The spec-layer pair is read **nearest first**: on the same subject an entry in (2) beats an entry in (3), because a call made for this spec is more specific than a call made for the tree. A call about which briefs exist or where a boundary sits lives in the spec's log; a call inside one feature's scope lives in the feature's log. That is what makes the spec-layer pair the logs binding the Decomposition trace above. A bound entry there fixing a boundary is a constraint on the brief, not ground the review re-cuts: a finding that would move such a boundary is retracted at 3b and, if it survives as substance, escalates as `OPEN_QUESTION` for `/spec-author` rather than being applied here. A missing log is not an error — read what is there.
+
+**Boundary-binding force is gated on the parent spec carrying `## Decomposition`.** A spec with no decomposition never cut a boundary between briefs, so the log beside it binds content the ordinary way and settles no boundary — there is none to settle, and reading one out of it invents a seam the spec never drew. The gate is on the section, not the path: a root `spec.md` that *does* carry `## Decomposition` has a boundary-binding root `decisions.md`.
+
+For each dated entry in either log (only Active bound entries are consulted — skip the `## Archived (superseded / obsolete)` tail; per `~/.claude/skills/_review-common/principles.md` § What counts as a bound entry):
 
 - **Strong match** — entry's Decision subject substring-matches a brief Goal / Non-goal / User-facing change verbatim.
 - **Topical match** — entry's Decision title or Why paragraph names a concept the brief discusses.
@@ -410,15 +468,16 @@ Output a `Decisions Log Consistency` block:
 
 ```
 ### Decisions Log Consistency
-decisions.md present: <bool>
-Bound entries consulted: <count>
+Feature log present: <bool>   Spec log present: <bool> (<path>)   Shared spec log present: <bool> (specs/decisions.md)
+Bound entries consulted: <count> feature + <count> spec + <count> shared
+Boundary-binding: <yes — parent spec carries ## Decomposition | no — content-binding only>
 Contradictions:
-- decisions.md entry "<title>" (<date>): "<verbatim Decision sentence>"
+- <feature | spec | shared> log entry "<title>" (<date>): "<verbatim Decision sentence>"
   Brief claim: "<verbatim from brief>"  [HARD: contradicts decisions.md]
 - ...
 
 Honored bound decisions:
-- "<entry title>" (<date>) — brief honors via §<section>
+- "<entry title>" (<date>, <feature | spec | shared> log) — brief honors via §<section>
 ```
 
 ### 1d. Brief style supplements Stage 0
@@ -430,7 +489,7 @@ Stage 0 covered the deterministic floor. Stage 1d covers brief-style hygiene the
 - Each `Intentionally deferred` bullet's destination resolves: a `#NNN` that plausibly exists, or a feature slug that is a real or clearly-named future feature. File SOFT MEDIUM under P-BRIEF-SCOPE-BUCKETS on a bare "later" or "TBD".
 - Each Non-goal is a real scope kill (lightweight LLM check; platitudes flagged SOFT MEDIUM under P-BRIEF-NON-GOAL-REALITY).
 - Open questions are in question form (regex check: must contain `?` per bullet; statements flagged SOFT MEDIUM under P-BRIEF-OPEN-QUESTION-FORM).
-- Cohort claims cite a source (Problem section: regex `~?\d+(-\d+)?\s+(users?|customers?|accounts?|records?)` — every match must be followed within 3 lines by a citation marker `(per `<file>` / `<query>`)` / "verified by" / "as of <date>"; uncited matches flagged SOFT MEDIUM under P-BRIEF-COHORT-CITATION).
+- Cohort claims cite a source (Problem section: regex `~?\d+(-\d+)?\s+(authors?|users?|movies?|books?|TV shows?|persons?)` — every match must be followed within 3 lines by a citation marker `(per `<file>` / `<query>`)` / "verified by" / "as of <date>"; uncited matches flagged SOFT MEDIUM under P-BRIEF-COHORT-CITATION).
 
 ### 1e. Stage 1 mechanical fixes
 
@@ -439,6 +498,9 @@ Apply unambiguous fixes immediately:
 - Forbidden style-class patterns (tense, banned phrases, emojis from Stage 0 SOFT findings) → fix in place.
 - Stale dates (Last-updated more than 30 days old AND brief content edited since) → update Last-updated.
 - Trivial Open-question form fixes (statement → question) when the conversion is unambiguous.
+- A lifecycle `Status:` value in frontmatter (`Proposed`, `Active`, `Shipped`, `Archived`, or anything else that is not `needs-user-input`) → delete the line. `features/README.md`'s Brief roster holds that state, and the copy in the brief goes stale the day the roster moves. `Status: needs-user-input` is never touched here — the Status-frontmatter check already refused the review on it.
+- A missing `Spec:` header, in **every** layout where the parent resolved by presence — one spec folder under `specs/`, a root `spec.md` carrying `## Decomposition`, or a root `spec.md` without one → write the resolved path into the header. `/brief-author` writes the header in all three, so the fix restores what the author would have written; in the legacy layout it clears no finding and is still worth writing, because a brief that names its own parent stops depending on the reader repeating the presence walk. Never write one the review had to ask about; that answer belongs to the user and to `/brief-author`.
+- An **outcome owed** the Decomposition trace found undelivered, when the stub states it unambiguously and no Scope bucket excludes it → add it to `## Goals` in the brief's voice with a `Measured by:` clause. Restoring scope the spec assigned this brief is not weakening it. Everything else the trace found — annexation either way, an outcome the brief's Scope excludes — is an `OPEN_QUESTION`, never an auto-fix.
 
 Emit `Stage 1 fixes applied:` bullet list.
 
@@ -448,10 +510,11 @@ Findings that survive Stage 1 (HARDs that can't be auto-fixed) are passed to Sta
 
 Bulleted facts list (not verbose YAML). Include:
 
-- brief_path, HEAD sha
+- brief_path, HEAD sha, parent_spec path
 - spec_trace: goals_anchored, non_goals_contradiction, hard_findings
+- decomposition_trace: `N/A` | goals_claiming_sibling_surface, outcomes_owed_undelivered, coverage_rows_for_slug, outcomes_owed
 - project_memory_consistency: entries_consulted, contradictions, honored_invariants
-- decisions_log_consistency: entries_consulted, contradictions, honored_bound_decisions
+- decisions_log_consistency: feature_entries_consulted, spec_entries_consulted, shared_spec_entries_consulted, boundary_binding, contradictions, honored_bound_decisions
 - brief_style: goal_verifiability_findings, non_goal_reality_findings, open_question_form_findings, cohort_citation_findings
 - stage_1_fixes_applied
 - pre_resolved_hard_findings
@@ -566,17 +629,19 @@ Deduplicate (same finding flagged by multiple → merge, attribute to all). Grou
 
 - **Mention of `spec.md`** → DO NOT auto-edit. Spec amendments are a stop-the-world decision. Surface as `OPEN_QUESTION`: "fix would amend spec.md — user arbitrates whether the spec needs updating or the brief should be re-scoped."
 - **Mention of `decisions.md`** → write the dated entry to `features/<feature>/decisions.md` per the template (today's date, current `round_number`, bound decision in one sentence, a `**Status:** bound` line, rationale 1-3 sentences, cross-link from the brief). Append it under the `## Active (bound)` heading. If the new decision *replaces* an existing Active bound entry on the same surface, in the SAME edit flip that older entry to `**Status:** superseded by "<new title>" (<today's date>)` and move it to the `## Archived (superseded / obsolete)` section — a superseded entry left reading `bound` would silently override the new decision (per `~/.claude/skills/_review-common/principles.md` § What counts as a bound entry).
+  A fix whose substance is a **boundary call** — which brief owns a unit, where a seam falls — does not belong in the feature log even when the fix prose names `decisions.md`. Escalate it as `OPEN_QUESTION` for `/spec-author` to bind in the spec's log; a boundary bound at the feature scope binds nothing for the sibling brief on the other side of it.
 - **Mention of `CLAUDE.md`** → DO NOT auto-edit. CLAUDE.md is the project's bound-invariant ledger; amendments are user-only. Surface as `OPEN_QUESTION`: "fix would amend CLAUDE.md — user arbitrates."
 - **Mention of project-memory paths** (`~/.claude/projects/<project>/memory/<file>.md`, `MEMORY.md`, or any path under `memory/`) → DO NOT auto-edit. Memory files carry the same bound-invariant authority as CLAUDE.md. Surface as `OPEN_QUESTION`: "fix would amend project memory at `<path>` — user arbitrates."
 
-Record cross-file edits in `cross_file_edits[]` for the per-round metrics. The four upstream-invariant sources (spec, CLAUDE, memory, decisions) all sit above the brief in the authority order; only `decisions.md` is feature-scoped enough that this skill auto-writes it. The other three are project-wide and require explicit user action.
+Record cross-file edits in `cross_file_edits[]` for the per-round metrics. The upstream-invariant sources (the parent spec, CLAUDE, memory, and the spec-layer decisions logs) all sit above the brief in the authority order; only the **feature's** `decisions.md` is scoped narrowly enough that this skill auto-writes it. The rest require explicit user action — including both spec-layer logs, which bind boundaries *across* briefs and so are never written from inside one of them.
 
 **Authority order when artifacts disagree** (highest to lowest):
 
-1. `spec.md` / `context/specs/*.md` — product master-spec; the brief inherits, never overrides.
+1. The parent spec / `context/specs/*.md` — product master-spec, including the `## Decomposition` section that cut this brief; the brief inherits, never overrides.
 2. `CLAUDE.md` and project memory — bound-invariant ledger; the brief inherits, never overrides.
-3. `features/<feature>/decisions.md` — durable arbitration record at the feature scope.
-4. The brief under review.
+3. The spec-layer decisions logs, nearest first (`specs/<slug>/decisions.md`, then `specs/decisions.md`) — durable arbitration of which briefs exist and where the boundaries between them sit.
+4. `features/<feature>/decisions.md` — durable arbitration record at the feature scope.
+5. The brief under review.
 
 When a finding's substance reveals contradiction across these files, the brief aligns to the upstream sources. Contradiction *between* spec.md and CLAUDE.md / project memory escalates as `OPEN_QUESTION` (user arbitrates which is canonical).
 
@@ -589,7 +654,7 @@ When a finding's substance reveals contradiction across these files, the brief a
 
 ### Post-fix premise verification
 
-Per `~/.claude/skills/_review-common/orchestrator.md` § Post-fix premise verification. The claims that matter at this layer are references, not behaviors: "spec.md §X authorizes Y", "project memory says Z", "decisions.md entry W bound this", and cohort claims ("~N users / accounts / records"). Verify by reading the cited file and grepping for the verbatim phrase.
+Per `~/.claude/skills/_review-common/orchestrator.md` § Post-fix premise verification. The claims that matter at this layer are references, not behaviors: "spec.md §X authorizes Y", "project memory says Z", "decisions.md entry W bound this", and cohort claims ("~N users / books / authors"). Verify by reading the cited file and grepping for the verbatim phrase.
 
 ### Same-round focused re-prosecution on rewritten prose
 
@@ -597,13 +662,13 @@ Per `~/.claude/skills/_review-common/orchestrator.md` § Same-round focused re-p
 
 ### 3e. Classify remaining unresolved findings
 
-Active classes for brief review: `STRUCTURAL_SHAPE_FAILED`, `STABLE_DISAGREEMENT`, `OPEN_QUESTION`, `FIX_INTRODUCED_PREMISE_INVERSION`, `BRIEF_SCOPE_BUNDLE`, `FEATURE_NONCONVERGENCE`, `POLISH_PLATEAU`, `REPO_STATE_DRIFT`.
+Active classes for brief review: `STRUCTURAL_LINT_FAILED`, `STRUCTURAL_SHAPE_FAILED`, `STABLE_DISAGREEMENT`, `OPEN_QUESTION`, `FIX_INTRODUCED_PREMISE_INVERSION`, `BRIEF_SCOPE_BUNDLE`, `FEATURE_NONCONVERGENCE`, `POLISH_PLATEAU`, `REPO_STATE_DRIFT`.
 
 **Carry-forward consultation (decisions-log-first, then ephemeral cache).**
 
 Same two-priority pattern as the sister skills.
 
-**Priority 1 — `decisions.md` lookup** (durable arbitration; persists across rounds). Read `features/<feature>/decisions.md`. Search for entries whose Decision subject substring-matches the finding's surface.
+**Priority 1 — `decisions.md` lookup** (durable arbitration; persists across rounds). Read `features/<feature>/decisions.md`, and the two spec-layer logs alongside it (Stage 1c already loaded all three). Search for entries whose Decision subject substring-matches the finding's surface. A boundary finding is matched against the spec-layer logs nearest-first, since that is where a boundary call is bound — a finding that re-cuts a boundary an Active bound entry there fixes is dropped, exactly as a feature-scoped finding is dropped against the feature log.
 
 - **Strong match** — entry quotes the same identifier or phrase the finding cites verbatim.
 - **Topical match** — entry's title or Why paragraph names the same concept (cohort threshold, scope kill, user-facing change, etc.).
@@ -627,10 +692,10 @@ Record both consultations in `decisions_md_consultation` and the existing carry-
 Verdict gate logic (brief layer):
 
 - **APPROVED** when ALL of:
-  - Stage 0 Structural Shape Check exited clean
+  - Stage 0 exited clean — both the lint gate and the Structural Shape Check
   - Tier-1 weight = 0
   - Tier-2 weight ≤ 4
-  - No `STABLE_DISAGREEMENT`, `OPEN_QUESTION`, `FIX_INTRODUCED_PREMISE_INVERSION`, `STRUCTURAL_SHAPE_FAILED`, `BRIEF_SCOPE_BUNDLE`, `FEATURE_NONCONVERGENCE`, `REPO_STATE_DRIFT`
+  - No `STABLE_DISAGREEMENT`, `OPEN_QUESTION`, `FIX_INTRODUCED_PREMISE_INVERSION`, `STRUCTURAL_LINT_FAILED`, `STRUCTURAL_SHAPE_FAILED`, `BRIEF_SCOPE_BUNDLE`, `FEATURE_NONCONVERGENCE`, `REPO_STATE_DRIFT`
 - **NEEDS USER INPUT** otherwise.
 
 Compute Tier-1 weight (CRITICAL=8, HIGH=4, MEDIUM=2, LOW=1) and Tier-2 weight after fix application.
@@ -647,8 +712,10 @@ Compute Tier-1 weight (CRITICAL=8, HIGH=4, MEDIUM=2, LOW=1) and Tier-2 weight af
 **Author sidecar:** {`consulted; N claims verified skipped; M self-prosecution findings skipped` | `absent (brief was hand-written)` | `present but SHA differs (treated as hint)`}
 **Authoring mode warning:** {`none` | `sidecar reports authoring_mode: "draft" — /brief-author --draft skipped ground-truth and self-prosecution; reviewer-side feedback runs but the artifact was not verified at write time`}
 **Personas:** {names}
+**Stage 0 lint gate:** `/plan-lint --type brief` PASS / N WARN / FAIL
 **Stage 0 shape check:** PASS / N hard findings (sections / forbidden patterns / implementation creep)
-**Stage 1 audit:** spec_trace PASS / N hard; project_memory PASS / N hard; decisions_log PASS / N hard
+**Parent spec:** {resolved path} {(`from Spec: header` | `resolved by presence` | `legacy — no decomposition`)}
+**Stage 1 audit:** spec_trace PASS / N hard; decomposition_trace PASS / N hard / N/A; project_memory PASS / N hard; decisions_log PASS / N hard
 **Stage 1 mechanical fixes applied:** {count}
 **Stage 2 personas:** {N} agents in parallel
 **Stage 3 fixes applied:** {count} (HARD: {n}, SOFT: {n})
@@ -679,6 +746,7 @@ For each class swept (omit block entirely when class_sweep.ran=false):
 - {finding} → retracted because {critical-pair policy / pre-resolved by Stage 1 / superseded / re-prosecuted author-verified claim without justification}
 
 ### Blockers (if any)
+- [STRUCTURAL_LINT_FAILED] {verbatim /plan-lint --type brief output} — fix and re-invoke.
 - [STRUCTURAL_SHAPE_FAILED] {finding} — fix and re-invoke.
 - [STABLE_DISAGREEMENT] {finding} — Persona A: {fix A}; Persona B: {fix B}. Pick one.
 - [OPEN_QUESTION] {finding} — {question}.
@@ -696,8 +764,10 @@ If `NEEDS USER INPUT`: the next step is **targeted edits to clear the listed blo
 ## Hard rules
 
 - **Status-frontmatter check is mandatory and runs first.** A brief with frontmatter `Status: needs-user-input` is mid-cycle authoring state; skill refuses to run against it and points the user back at `/brief-author`. The check is deterministic and runs before Stage 0.
-- **Stage 0 Structural Shape Check is mandatory.** A brief with missing required sections or implementation creep is unprosecutable; LLM judgment on a structurally-broken brief produces noise.
+- **Both halves of Stage 0 are mandatory, in order.** `/plan-lint --type brief` runs first and short-circuits on exit 1; the inline Structural Shape Check runs second. A brief with missing required sections or implementation creep is unprosecutable, and LLM judgment on a structurally-broken brief produces noise.
 - **Stage 1 is mandatory.** Stage 2 personas reading the brief without the audit report will re-prosecute spec / memory / decisions facts.
+- **The Decomposition trace is mandatory whenever the parent spec carries `## Decomposition`.** Both directions run: no Goal claims a unit the Coverage table gives a sibling brief or a named seam, and every outcome owed in this brief's stub has a Goal delivering it. It is the one check that catches a brief quietly annexing its neighbour's scope, because annexation passes every other stage — the Goal anchors in a real spec section, and the annexed brief still anchors its own. A spec with no decomposition records `N/A` and the trace is skipped; that skip is the legacy path, not a shortcut.
+- **Both spec-layer decisions logs are consulted alongside the feature's own**, nearest first (`specs/<slug>/decisions.md`, then `specs/decisions.md`), at Stage 1c and again at 3e Priority 1. Active bound entries there settle which briefs exist and where boundaries sit — a force gated on the parent spec carrying `## Decomposition`. A finding that would move a bound boundary is retracted, and its substance escalates as `OPEN_QUESTION` for `/spec-author`. This skill never writes either log.
 - **Round Memory Pass is mandatory.** Skipping it disables carry-forward consultation. State file lives at `~/.claude/cache/review-state/<feature>__brief.json` (NOT in the project repo).
 - **Author sidecar consultation is mandatory when the sidecar exists.** The brief-author already verified claims and self-prosecuted; re-prosecuting author-verified claims without a concrete upstream-change citation is a forbidden finding. The sidecar at `~/.claude/cache/author-state/<feature>__brief.json` is the brief-layer's analog of Stage 1's pre-resolved findings.
 - **Orchestrator verifies its own edits.** Post-fix premise verification runs after Stage 3d, before classification.
@@ -718,10 +788,11 @@ If `NEEDS USER INPUT`: the next step is **targeted edits to clear the listed blo
 ## Compliance self-check (before rendering verdict)
 
 - [ ] Status-frontmatter check ran first; not bypassed.
-- [ ] Stage 0 Structural Shape Check ran; required sections verified; banned patterns absent.
+- [ ] Stage 0 ran both halves in order: `/plan-lint --type brief` (exit code recorded), then the Structural Shape Check — required sections verified, banned patterns absent.
 - [ ] Round Memory Pass ran; reviewer state loaded; author sidecar consulted (or marked absent).
 - [ ] **Remediation-completeness ran on every prior blocker** (`round_number > 1`): `remediation_completeness` holds one entry per entry in the prior round's `prior_blockers`, each with a non-empty `coupled_sites_checked` and an explicit `decisions_entry`. Every downstream plan root the feature resolves to was checked, not just one — an amendment swept into the brief alone leaves every engineering plan delivering the superseded contract, and both artifacts review clean in isolation. Any `REMEDIATION_INCOMPLETE` / `DECISIONS_PROVENANCE_GAP` filed appears in the verdict and was not dropped by carry-forward.
-- [ ] Stage 1 ran in full: spec trace, project memory consistency, decisions log consistency, brief style supplements.
+- [ ] Stage 1 ran in full: spec trace, decomposition trace (or `N/A` recorded because the parent spec carries no `## Decomposition`), project memory consistency across every decisions log (feature, parent spec, shared), brief style supplements.
+- [ ] Decomposition trace ran both directions — every Goal's claimed units checked against the Coverage table, every outcome owed in this brief's stub checked for a delivering Goal. A trace reporting only the forward direction did not run; re-run it. Every annexation finding appears as an `OPEN_QUESTION` and was not auto-applied in either direction.
 - [ ] Stage 2 spawned all M persona agents in parallel.
 - [ ] Stage 3 applied critical-pair retractions before applying fixes.
 - [ ] Class Sweep ran for every distinct recurring category among surviving Stage 2 findings — `class_sweep.sweep_agents_spawned` equals the count of distinct sweep-eligible categories, every agent recorded a `peer_set_size` + non-empty `swept_clean`, every surviving sibling appears in the fix set or a blocker (or `class_sweep.ran=false` recorded because zero sweep-eligible categories existed).
@@ -732,12 +803,15 @@ If `NEEDS USER INPUT`: the next step is **targeted edits to clear the listed blo
 - [ ] Verdict template includes all metric lines, even when count = 0.
 - [ ] Cross-file fix scope checked: `decisions.md` edits applied; mentions of `spec.md` / `CLAUDE.md` / project-memory paths escalated as `OPEN_QUESTION`.
 - [ ] State file persisted with new round entry appended.
+- [ ] Verdict banner: the script ran (with `--skill`), its fenced stdout ends the response, nothing follows it.
 
 ## Edge cases
 
 - **Brief file not found:** report and exit; no state-file changes.
 - **Persona file not found:** auto-resolution falls back to next default persona; explicit personas stop and ask.
-- **`spec.md` missing:** Skill warns but proceeds. Spec trace marked `N/A — no spec to anchor against`. The brief layer requires spec.md for full prosecution; persona findings about spec contradiction are downgraded to `OPEN_QUESTION` (user resolves whether to create spec.md or accept the brief as the upstream).
+- **No parent spec resolves:** Skill warns but proceeds. Spec trace marked `N/A — no spec to anchor against`, decomposition trace `N/A`. The brief layer wants a spec for full prosecution; persona findings about spec contradiction are downgraded to `OPEN_QUESTION` (user resolves whether to author the spec or accept the brief as the upstream). Warn only when *nothing* resolves — a project on a `specs/` tree has no root `spec.md`, and warning on that absence alone would fire on every brief in it.
+- **`Spec:` header names a spec that exists, but its Coverage table has no row for this brief's slug:** The feature directory name **is** the slug, so the lookup is already exact — a Briefs-table row matching no feature directory, or a feature directory matching no row, is precisely the mismatch to flag. Do not fall back to tracing against the whole spec and do not go looking for a near-match row under another name. Record `decomposition_trace: no row for <slug>` and file `OPEN_QUESTION` — either the brief names the wrong parent or the spec's decomposition never cut this brief, and both are answered upstream.
+- **Parent spec's Decomposition names this slug but its scope stub is empty:** The forward direction still runs against the Coverage table; the inverse direction records `outcomes owed: 0` and files `OPEN_QUESTION` rather than reading the empty stub as "this brief owes nothing". An empty stub answers nothing, and treating silence as coverage is the failure the trace exists to prevent.
 - **Project memory absent:** warn and proceed. CLAUDE.md is the minimum upstream invariant source. Memory entries marked `0 consulted` in Stage 1.
 - **Brief authored via `/brief-author --draft`** (sidecar `authoring_mode: "draft"`): proceed with full prosecution; warn in verdict that the artifact is unhardened. The user invoked `--draft` deliberately and wants reviewer-side feedback before promoting to a hardened brief.
 - **Author sidecar SHA differs from brief SHA:** user edited the brief manually after `/brief-author` emitted. Treat sidecar's `claims_verified` as a hint, not a binding skip-list. Stage 2 may re-prosecute spans where user-edits overlap author-verified claims.
@@ -751,7 +825,8 @@ If `NEEDS USER INPUT`: the next step is **targeted edits to clear the listed blo
 
 ## Relationship to sister skills
 
-- **`/brief-author`** writes the brief and the author sidecar this skill consults. The author runs ground-truth verification and self-prosecution at write time; this skill (the reviewer) consults the sidecar to skip re-prosecuting author-arbitrated claims and prosecutes only what the author missed or what the user introduced via manual edits since.
+- **`/spec-author` and `/spec-review`** own the parent spec, its `## Decomposition`, and its decisions log — the slice this brief was cut from and the Coverage table the Decomposition trace prosecutes against. A boundary this review cannot honor goes back to that pair as an `OPEN_QUESTION`; this skill never re-cuts one, and never edits the spec or its log.
+- **`/brief-author`** writes the brief and the author sidecar this skill consults. Its write-time no-annexation check is the prevention side of the Decomposition trace here; this skill re-runs the check independently, because the author's is skipped in `--draft` mode and neither check sees a hand-edit made after the other ran. The author runs ground-truth verification and self-prosecution at write time; this skill (the reviewer) consults the sidecar to skip re-prosecuting author-arbitrated claims and prosecutes only what the author missed or what the user introduced via manual edits since.
 - **`/engineering-plan-review-v2`** prosecutes the brief at the engineering-plan layer (premise interrogation §brief-environment sub-pass). Findings raised there belong upstream — feeding back into the next `/brief-author` invocation's State-load stage via warm-mode carry-forward, OR triggering a `/brief-review-v2` re-invocation for an external audit.
 - **`/plan-review-v2`** indirectly consumes the brief (via the engineering plan). Brief edits cascade through the engineering-plan-review's BRIEF_AMENDMENT_NEEDED class.
 

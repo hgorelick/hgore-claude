@@ -9,7 +9,10 @@ The pack turns a feature from an idea into merged code through a chain of small,
 ## The lifecycle
 
 ```
-spec.md ──/spec-author──▶ /spec-review
+vision.md ──/vision-author──▶ /vision-review      root source of truth + spec map (multi-spec projects only)
+   │
+   ▼
+spec.md ──/spec-author──▶ /spec-review            source of truth + its decomposition into briefs
    │
    ▼
 brief.md ──/brief-author──▶ /brief-review-v2      "what & why" for one feature
@@ -23,6 +26,9 @@ implementation/<chunk>.md ──/plan-author──▶ /plan-review-v2      one c
    │
    ▼
 /execute-plan ──▶ (auto-opens the PR) ──▶ /review-pr-v2 ──▶ merge
+   │
+   ▼ (when every chunk of a plan has shipped)
+/ep-close ──▶ seals the engineering plan; later scope routes to a new track or feature
 ```
 
 Each **author** skill writes the artifact, grounding every claim against the repo and self-prosecuting before it emits. Each **review** skill convenes an adversarial tribunal of persona agents (correctness, security, architecture, testing, …) that attack the artifact, file findings with evidence, apply fixes, and return a verdict. `/plan-lint` is the deterministic structural floor the review skills assume has already passed.
@@ -33,8 +39,11 @@ Each **author** skill writes the artifact, grounding every claim against the rep
 
 ```
 skills/
+  # Project vision (multi-spec projects)
+  vision-author/  vision-review/              vision.md and its spec map — the root the specs descend from
+
   # Root spec
-  spec-author/  spec-review/                  the project's source-of-truth spec.md
+  spec-author/  spec-review/                  the project's source-of-truth spec.md + its brief decomposition
 
   # Feature brief — the "what & why"
   brief-author/  brief-review-v2/
@@ -52,6 +61,7 @@ skills/
   open-pr/                                    commit in logical chunks, push, open a PR
   review-pr-v2/                               adversarial tribunal on the branch's PR
   cleanup-worktree/                           tear down a merged chunk's worktree
+  ep-close/                                   seal an engineering plan once every chunk has shipped
 
   # Blocker handling & scope
   explain-blockers/                           triage a review's blockers into decisions for you
@@ -62,6 +72,7 @@ skills/
   features-init/                              scaffold the features/ folder in a new project
   _author-common/ _plan-common/               shared protocols the skills load
   _review-common/ _spec-common/
+  _vision-common/ _decompose-common/
 hooks/
   block-self-scheduling.sh                    ask before Claude self-invokes /open-pr, /execute-plan,
                                               /review-pr-v2, or a scheduler
@@ -83,7 +94,7 @@ features/<feature>/
 
 Plus a project root that carries:
 
-- `spec.md` — the product source of truth (business rules, formulas).
+- `spec.md` — the product source of truth (business rules, formulas). A project large enough to carry several specs puts `vision.md` at the root instead, with per-system specs under `specs/<slug>/spec.md` — the vision's spec map decides where each spec's boundary falls.
 - `personas/*.md` — the reviewer lenses (`architecture.md`, `security.md`, `testing.md`, …). The review skills load these; **they must exist at your repo root** or the review stops rather than run under-calibrated.
 - `CLAUDE.md` — your global rules (the skills read it for project conventions and business rules).
 
@@ -147,6 +158,7 @@ claude --version
 4. Per chunk: `/plan-author <feature>/<chunk>` then `/plan-review-v2`. A second consecutive APPROVED auto-opens the plan's docs PR.
 5. `/execute-plan <feature>/<chunk>` — TDD implementation inside an isolated worktree; on a clean (COMPLETE) verdict it auto-opens the chunk's PR into `main`.
 6. `/review-pr-v2` on the PR (started fresh so the review is independent of the code-writing session), then merge, then `/cleanup-worktree`.
+7. When the plan's last chunk has merged: `/ep-close` seals the plan. A closed plan accepts no new chunks — later scope routes to an open sibling track, a new track, or a new feature.
 
 When a review returns **NEEDS USER INPUT**, `/explain-blockers` triages the blockers into plain-language decisions, or `/solve-blockers` researches each to a recommended fix.
 

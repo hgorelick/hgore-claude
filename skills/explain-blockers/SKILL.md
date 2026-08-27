@@ -6,7 +6,7 @@ user-invocable: true
 
 # /explain-blockers
 
-Six skills emit verdicts that list blockers needing user input — the three v2 reviewers (`/plan-review-v2`, `/engineering-plan-review-v2`, `/review-pr-v2`) and the three authors (`/brief-author`, `/engineering-plan-author`, `/plan-author`). Both halves write blockers in the same shape with the same blocker classes (registered in `~/.claude/skills/_review-common/blocker-classes.md`), persisted to parallel cache directories: `~/.claude/cache/review-state/` and `~/.claude/cache/author-state/`. This skill triages either, transparently.
+Every layer of the artifact chain emits verdicts that list blockers needing user input, from the vision map down to the PR — the reviewers (`/vision-review`, `/spec-review`, `/brief-review-v2`, `/engineering-plan-review-v2`, `/plan-review-v2`, `/review-pr-v2`) and the authors (`/vision-author`, `/spec-author`, `/brief-author`, `/engineering-plan-author`, `/plan-author`). Both halves write blockers in the same shape with the same blocker classes (registered in `~/.claude/skills/_review-common/blocker-classes.md`), persisted to parallel cache directories: `~/.claude/cache/review-state/` and `~/.claude/cache/author-state/`. This skill triages any of them, transparently.
 
 The verdict prose itself is written by Claude for Claude — full of file paths, line numbers, internal class names, and review-machinery jargon. The user reading the verdict did not write the code or the plan; Claude did. The user is the **director**, not the implementer. They make decisions; they do not read source.
 
@@ -26,12 +26,12 @@ The skill runs **in the main conversation thread** — no subagents. Blocker cou
 
 `$ARGUMENTS` is matched against these shapes in priority order; the first that yields one or more parseable blockers wins:
 
-1. **No arguments / `latest`** — list `~/.claude/cache/review-state/*.json` AND `~/.claude/cache/author-state/*.json` sorted by mtime (most-recent first across both directories). For each candidate, check `last_verdict`: skip files where the verdict is `APPROVED` (with empty `prior_blockers`) or `CLOSED` (engineering-plan only — also empty `prior_blockers`). For author-state engineering-plan files, `APPROVED` may legitimately have `IMPLEMENTABILITY_GAP` entries in `prior_blockers` — those DO need triage, so don't skip APPROVED unconditionally; check whether `prior_blockers` is empty. Pick the first remaining candidate. If two or more candidates were modified within the same hour, surface the candidate list and ask the user which to target — state files persist across rounds (review-side) and across authoring invocations (author-side), so the most recently *touched* file is not always the one the user means.
+1. **No arguments / `latest`** — list `~/.claude/cache/review-state/*.json` AND `~/.claude/cache/author-state/*.json` sorted by mtime (most-recent first across both directories). For each candidate, check `last_verdict`: skip files where the verdict is `APPROVED` (with empty `prior_blockers`) or `CLOSED` (the vision and engineering-plan layers, the two that emit it — also empty `prior_blockers`). `APPROVED` may legitimately carry blockers that do not gate it — `IMPLEMENTABILITY_GAP` on an engineering-plan or spec file, `SPEC_BOUNDARY_UNBOUND` on a vision file — and those DO need triage, so don't skip APPROVED unconditionally; check whether `prior_blockers` is empty. Pick the first remaining candidate. If two or more candidates were modified within the same hour, surface the candidate list and ask the user which to target — state files persist across rounds (review-side) and across authoring invocations (author-side), so the most recently *touched* file is not always the one the user means.
 2. **Slug** — bare token matching `~/.claude/cache/review-state/<slug>.json` OR `~/.claude/cache/author-state/<slug>.json`. Check review-state first, then author-state. If both exist for the same slug (e.g., the user has authored AND reviewed the same engineering plan — common pattern), and both have unresolved blockers, ask the user which they meant; reviewer-side and author-side blockers are not necessarily the same set.
 3. **State-file path** — absolute or `~`-relative path to a JSON state file. Load directly. The path's parent directory tells you which side it's from (`review-state` vs `author-state`).
 4. **Author-side artifact reference** — `brief <feature>` resolves to `~/.claude/cache/author-state/<feature>__brief.json`; `eng-plan <feature>` to `<feature>__engineering-plan.json`; `chunk <feature>/<chunk-slug>` to `<feature>__<chunk-slug>.json`. These shortcuts let the user reference a specific authoring artifact without typing the full slug pattern. For a **tracked** feature (engineering plans under `features/<feature>/plans/<track>/` — see `~/.claude/skills/_plan-common/layout.md`), the track is a slug segment: `eng-plan <feature>/<track>` → `<feature>__<track>__engineering-plan.json`, `chunk <feature>/<track>/<chunk-slug>` → `<feature>__<track>__<chunk-slug>.json`. A bare `eng-plan <feature>` against a tracked feature matches more than one state file — list them and ask which.
 5. **PR reference** — `pr <N>`, `pr #<N>`, `#<N>`, or `<owner>/<repo>#<N>`. Resolve via `gh pr view <N> --json reviews --jq '.reviews[] | select(.body | startswith("## Tribunal v2 — Verdict:"))'` to pull v2 verdict review comments (these are posted by `gh pr review --comment`, not as plain issue comments — `gh pr view --comments` would miss them). Take the most recent. Parse the `### Blockers` section for class + body lines. (PR-source blockers come only from `/review-pr-v2` — author skills don't post to PRs.)
-6. **Pasted verdict text** — raw markdown containing `## Tribunal v2 — Verdict:` (PR), `### Plan Status:` (plan reviews), or `# <Brief|Chunk plan|Engineering plan> authoring verdict —` (author skills). Parse blocker lines from the `### Blockers` block.
+6. **Pasted verdict text** — raw markdown containing `## Tribunal v2 — Verdict:` (PR), `### Plan Status:` (plan reviews), `### <Vision|Spec|Brief> Status:` (the upper-layer reviewers), or `# <Vision|Spec|Brief|Engineering plan|Chunk plan> authoring verdict —` (author skills, one alternative per authoring layer). Parse blocker lines from the `### Blockers` block.
 
 If none yield blockers, stop and ask the user what they meant. Do not guess.
 
@@ -49,7 +49,7 @@ Research, cluster, triage       (inline, main thread)
 Render list, then apply or hand off  (short output, top-down ordered)
 ```
 
-There is no inner loop and no re-invocation of the v2 skills. After the decision list renders, the operator chooses whether Claude applies the picks or hands off to `/solve-blockers`; either way, the next `/plan-review-v2` / `/engineering-plan-review-v2` / `/review-pr-v2` invocation picks up the resolutions through that skill's round-memory machinery.
+There is no inner loop and no re-invocation of the v2 skills. After the decision list renders, the operator chooses whether Claude applies the picks or hands off to `/solve-blockers`; either way, the next invocation of the reviewer that raised them — `/vision-review`, `/spec-review`, `/brief-review-v2`, `/engineering-plan-review-v2`, `/plan-review-v2`, or `/review-pr-v2` — picks up the resolutions through that skill's round-memory machinery.
 
 ---
 
@@ -63,9 +63,10 @@ Resolve `$ARGUMENTS` to one of three sources. The first is preferred when availa
 
 **Pre-flight check before parsing.** Read `last_verdict` (review-state) or `verdict` (author-state) from the file (or look for the verdict header line in PR/inline cases). Confirm at least one of:
 - Verdict is `NEEDS_USER_INPUT` (any source skill, either side).
-- Verdict is `APPROVED` AND `prior_blockers` contains entries with class `IMPLEMENTABILITY_GAP` — applies to BOTH `/engineering-plan-review-v2` (review-state) AND `/engineering-plan-author` (author-state). The three-state semantic is mirrored: in either case, `APPROVED` means shape-correct but cross-chunk decisions remain undecided, which is exactly what `IMPLEMENTABILITY_GAP` blockers triage.
+- Verdict is `APPROVED` AND `prior_blockers` contains entries with class `IMPLEMENTABILITY_GAP` — applies to BOTH `/engineering-plan-review-v2` / `/engineering-plan-author` (cross-chunk decisions remain undecided) AND `/spec-review` / `/spec-author` (the imagined-brief-author dry run left a brief unauthorable; the gap is keyed by brief slug and blocks `/brief-author` for that slug alone). Either side, either layer: `APPROVED` means shape-correct with decisions outstanding, which is exactly what these blockers triage.
+- Verdict is `APPROVED` AND `prior_blockers` contains entries with class `SPEC_BOUNDARY_UNBOUND` — `/vision-review` / `/vision-author`, the same semantic one layer further up. That class gates `CLOSED` and not `APPROVED`, so an APPROVED vision map with unbound boundary calls is the normal state to triage, not an anomaly.
 
-If neither holds, surface the verdict status and the empty/closed blocker list back to the user, and stop. Do not invent work for a CLOSED plan or a clean APPROVED.
+If none of these holds, surface the verdict status and the empty/closed blocker list back to the user, and stop. Do not invent work for a CLOSED plan or a clean APPROVED.
 
 **DRAFT_EMITTED verdicts** (author-side only) do NOT have triage-worthy blockers — the author skill skipped its hardening stages (Plan-lint, Concern-lint where applicable, Ground-truth audit, Self-prosecution) because the user passed `--draft`. There are no findings, but there is also no APPROVED status. Surface this explicitly: "Verdict is `DRAFT_EMITTED` — the user opted out of the safety net by passing `--draft`. Re-invoke `/<author-skill> <feature>` without `--draft` to run ground-truth and self-prosecution, then triage the resulting blockers." Do NOT proceed to research — there is nothing to research.
 
@@ -83,7 +84,7 @@ blockers: [
     source_kind: "plan_state_file" | "pr_state_file" | "author_state_file" | "pr_review_comment" | "inline_text",
     source_path: "<absolute path or PR URL>",
     state_side: "review" | "author",               // derived from parent directory of source state file
-    artifact_kind: "engineering_plan" | "chunk_plan" | "brief" | "pr_diff",
+    artifact_kind: "vision" | "spec" | "engineering_plan" | "chunk_plan" | "brief" | "pr_diff",
     artifact_root: "<plan file path | repo root + base..head sha>"
   },
   ...
@@ -91,9 +92,11 @@ blockers: [
 ```
 
 Determine `artifact_kind` from the source-file shape:
+- Slug ending in `__vision`, OR `artifact_path` ending in `vision.md` → `vision`.
+- Slug ending in `__spec` (both the per-system `<project>__<spec-slug>__spec` and the single-root `<project>__spec` keying), OR `artifact_path` ending in `specs/<slug>/spec.md` or a root `spec.md` → `spec`.
 - Author-state slug ending in `__brief` (e.g., `user-profile-sync__brief.json`) → `brief`.
 - `plan_path` / `artifact_path` ending in `engineering-plan.md`, OR author-state slug ending in `__engineering-plan` → `engineering_plan`.
-- `plan_path` / `artifact_path` ending in `implementation/<chunk-slug>.md` or `implementation/<NN>-<chunk-slug>.md` (or similar per-chunk file; strip any leading `NN-` creation-index prefix when extracting the slug), OR author-state slug of the form `<feature>__<chunk-slug>` / `<feature>__<track>__<chunk-slug>` (with neither `__brief` nor `__engineering-plan` suffix) → `chunk_plan`.
+- `plan_path` / `artifact_path` ending in `implementation/<chunk-slug>.md` or `implementation/<NN>-<chunk-slug>.md` (or similar per-chunk file; strip any leading `NN-` creation-index prefix when extracting the slug), OR author-state slug of the form `<feature>__<chunk-slug>` / `<feature>__<track>__<chunk-slug>` (carrying none of the `__vision`, `__spec`, `__brief`, `__engineering-plan` suffixes) → `chunk_plan`.
 - State-file slug containing `__pr-<N>` or no `plan_path` field → `pr_diff`.
 
 Determine `state_side` from the source state file's parent directory:
@@ -147,7 +150,25 @@ For each blocker:
    - **`BRIEF_AMENDMENT_NEEDED`** (engineering-plan only) — the plan body decides something the brief should decide. Read the brief. Either (a) propose the brief amendment that closes the gap, or (b) identify which chunk should be dropped because no brief Goal supports it. Do **not** propose putting brief-level decisions in the plan body — that is the failure mode being prosecuted.
 
    - **`REPO_PREMISE_GAP`** (engineering-plan + chunk-plan) — the Repo Reality Sweep read the shipped code and the plan's premise about it did not survive. **Open the cited code yourself before triaging** — this class is the one whose blocker text is worth least second-hand, because the finding IS the code. Identify which axis fired: incumbent divergence (the plan drops something the shipped code does), caller closure (an existing caller is unaccounted for), or dependency guarantee (a primitive guarantees less than the plan's use assumes, at the plan's scale). The first two are usually a stated fix — the user's call is confirm-or-override, and the option list is short. The third is a genuine director decision with three shapes: strengthen the use, narrow the population, or disclose the shortfall. For that one, **get the blast radius as a number before presenting it** — a read-only query or grep usually settles it, and "3,354 of 7,128" versus "some" changes which option the user picks. Whatever the axis, before proposing a remedy that adds a check, filter, or fallback, grep for whether the repo already implements it; proposing a redefinition of something that ships adjacent is this class's characteristic mistake.
-   - **`IMPLEMENTABILITY_GAP`** (engineering-plan only) — a cross-chunk-wiring decision is undecided OR an identifier needed by ≥2 chunks is unbound. Identify the decision / identifier. Propose a binding (the actual signature, name, ownership) and name which chunk should own it.
+   - **`IMPLEMENTABILITY_GAP`** (engineering-plan + spec layers) — *Engineering plan:* a cross-chunk-wiring decision is undecided OR an identifier needed by ≥2 chunks is unbound. Identify the decision / identifier, propose a binding (the actual signature, name, ownership), and name which chunk should own it. *Spec:* the imagined-brief-author dry run could not answer a question from one brief's scope stub plus its roster entry alone, and the finding is **filed per brief slug** — it blocks `/brief-author` for that slug and leaves every other brief authorable. Read the stub and the spec section it draws on, then propose the sentence the spec is missing. The call is what that sentence says; "author the brief anyway" is not an option, because the brief author hits the same wall.
+
+   - **`SPEC_BOUNDARY_UNBOUND`** (vision layer) — the same shape one layer up: two spec map entries claim one surface, or the imagined-spec-author dry run left a question the map could not answer. It gates `CLOSED` and not `APPROVED`, so it commonly arrives on an otherwise-clean verdict. Read both entries and, where a spec is already written, the file itself. The call is where the boundary sits, and it is a **design-ownership** question — present it as which system owns the rule, never as a formatting fix. Whichever way it lands, the answer is a binding the director makes once.
+
+   - **`SEAM_PREDICATE_MISSING`** (vision + spec layers) — a boundary has a name but no test that decides which side the *next* rule falls on. Read the seam and the units already assigned by it. Three shapes, and naming which one fired is most of the research: the split line lists what is already assigned instead of stating a test; a neighbouring boundary accepts the same units, so neither decides; the boundary needs two tests to state, which means it is two boundaries. The first is usually a single-call rewrite. The third is a real decision — splitting the boundary splits what sits under it.
+
+   - **`DECOMPOSITION_COVERAGE_GAP`** (spec layer) / **`VISION_COVERAGE_GAP`** (vision layer) — a unit of the upstream document is claimed by nothing and excluded by nothing, or a claimed invariant names nobody to prove it. Read the unit. Three resolutions, and which applies is usually forced: it belongs to a downstream artifact already in the set (single call, assign it); it belongs to a boundary's other side (single call, exclude it by that named boundary); or nobody has decided yet, which is the one real decision and lands in the state sidecar with its destination named. For a missing proof owner, propose the artifact whose checks would catch a violation, and reach for "the director checks this by hand" only when no authored artifact could.
+
+   - **`MAP_CONFORMANCE_GAP`** (vision + spec layers) — a written spec defines a surface its map entry does not claim, or omits one the entry does. **Open the spec before triaging** — this class is falsifiable against a real file, and the blocker text is worth least second-hand. Then the call is which document is wrong: the entry describes an intent the spec drifted from (fix the spec), or the spec is right and the entry is stale (fix the entry). Name which, with the surface in plain language.
+
+   - **`SPEC_NONGOAL_TRESPASS`** (spec layer) — a brief's scope stub does something the spec excludes, or something the project's cut list cut. Read the excluded item and the stub. Either the exclusion still holds and the scope drops, or the exclusion is out of date and the spec amends — the second is a director call about what the product is, and it is never resolved by quietly leaving both in place.
+
+   - **`SPEC_AMENDMENT_NEEDED`** / **`VISION_AMENDMENT_NEEDED`** — the layer-above twins of `BRIEF_AMENDMENT_NEEDED`: a downstream unit needs a rule its upstream does not carry, or contradicts one it does. Read the upstream section. Propose either the amendment that closes the gap or the downstream scope that should be dropped for want of it. Do **not** propose leaving the rule in the downstream document — a document that contradicts its upstream is amending it, and the amendment lands in the contradicted section explicitly.
+
+   - **`DECOMPOSITION_SURFACE_EXCESS`** (spec layer, numeric; vision layer, structural) — the decomposition is oversized. A **director decision** on the same terms as its sister size classes: propose the split, or size acceptance. Never apply a split yourself. Get the numbers before presenting it — how many downstream units, how deep the graph — because "eleven" and "large" pick different options.
+
+   - **`HOIST_INCOMPLETE`** — something the roster was holding was supposed to move into a newly written artifact, and its substance is not there. Read both. Usually a single call: carry the missing substance across. It becomes a decision only when the substance no longer has an obvious home, which means the boundary moved under it.
+
+   - **`DECOMPOSITION_STATUS_LEAK`** — the decomposition section picked up wording that will be wrong the day something ships. Almost always a single-call item: the content moves to the state sidecar (`features/README.md` at the spec layer, `specs/README.md` at the vision layer) and the section is rewritten as though the status had never been in it. Route it to the auto-fix set unless moving it would lose something nothing else records.
 
    - **`UNCORROBORATED_RESET`** (engineering-plan only) — single-persona RESET claim, escalated to CRITICAL HARD by the corroboration rule. The persona believes the plan's premise is broken at the repo-state or brief-environment layer. Read the claim verbatim. Verify against repo / project memory / `CLAUDE.md`. If verification corroborates, the user should re-scope; if it does not, recommend dismissal with a one-sentence rationale.
 
@@ -202,7 +223,7 @@ The user did not write a single line of the code or the plan. Claude wrote every
 - **Plain language by default.** "The naming convention in the plan" — not internal identifier names, file paths, or line numbers.
 - **User-facing names are fine.** Library/framework names (React, Postgres), features the user named themselves, third-party integrations they know about.
 - **Internal identifiers only when the user already uses them.** Check the brief, decisions log, conversation memory. If only Claude's plan text uses a name, paraphrase it.
-- **No file paths, line numbers, `path:line` citations, `git` commands, or review-machinery vocabulary** ("Stage 3", "round-memory", "premise inversion", "Tier-1 weight"). Self-test: would the user, who has not seen any code, recognize this? If no, paraphrase.
+- **No file paths, line numbers, `path:line` citations, `git` commands, or review-machinery vocabulary** ("Stage 3", "round-memory", "premise inversion", "Tier-1 weight"). Self-test: would the user, who has not seen any code, recognize this? If no, paraphrase. The closing verdict banner is exempt — it is the pipeline's shared status line, rendered by its script, not report prose.
 - **No "What the review flagged" prose.** The decision question carries the framing.
 - **No effort estimates.** The user does not care about S/M/L.
 - **No "Why it matters" paragraph.** If the consequence isn't obvious from the question, fold one short clause into Claude's pick. Don't dedicate a section to it.
@@ -265,8 +286,16 @@ There is no default — wait for the operator's answer.
 
 **When the triage produced no genuine decisions — only single-call (auto-fix) items and/or retraction candidates — skip the apply-or-handoff question entirely.** There is nothing to hand off and nothing to choose: apply the auto-fix items directly (still never touching state files), then name the source skill to re-invoke. Raising an apply-or-handoff prompt over a set of no-brainers is the same director-attention tax the single-call rule exists to remove.
 
-- If they pick **apply my picks**: make the edits for each live decision following its *My pick*, top-down, AND apply every auto-fix (single-call) item in the same pass. Only the plan / code / brief / PR change — **state files stay read-only** (`~/.claude/cache/review-state/` and `~/.claude/cache/author-state/` are owned by the source-skill machinery). Skip the retraction cluster — its "resolution" is "re-run the source skill", not an edit. When the edits land, name the source skill to re-invoke so its round-memory / carry-forward machinery validates the resolutions (`/plan-review-v2`, `/engineering-plan-review-v2`, `/review-pr-v2`, or the matching author skill).
+- If they pick **apply my picks**: make the edits for each live decision following its *My pick*, top-down, AND apply every auto-fix (single-call) item in the same pass. Only the plan / code / brief / PR change — **state files stay read-only** (`~/.claude/cache/review-state/` and `~/.claude/cache/author-state/` are owned by the source-skill machinery). Skip the retraction cluster — its "resolution" is "re-run the source skill", not an edit. When the edits land, name the source skill to re-invoke so its round-memory / carry-forward machinery validates the resolutions — the reviewer that raised them, or the matching author skill.
 - If they pick **`/solve-blockers`**: invoke it via the Skill tool on the same target. It reads this rendered report from scrollback and skips its own clustering.
+
+**Final line — verdict banner.** Every terminal path of this skill ends with the shared verdict-banner script's fenced stdout, emitted verbatim as the very last thing in the response (`~/.claude/skills/_review-common/blocker-classes.md` § Verdict banner, "The triage pair banners too"). `--skill` names the SOURCE skill to re-invoke; `<ROUND>` is the source verdict's round (`?` when the source carried none):
+
+- Picks applied (including the auto-fix-only path) → `RESOLVED`, count = blockers the edits cover.
+- Report rendered but nothing applied (operator declined, or picked neither option) → `DECISIONS PENDING`, count = open decisions.
+- Refusal paths (e.g. a `DRAFT_EMITTED` source) → `DECISIONS PENDING`, count 1, `--skill` naming the author skill to re-run.
+- Nothing to triage (clean `APPROVED` / `CLOSED`) → echo the source verdict's status, round, and blocker count.
+- Hand-off to `/solve-blockers` → no banner here; that skill's terminal path banners.
 
 ---
 
@@ -296,7 +325,7 @@ There is no default — wait for the operator's answer.
 This skill is a sibling, not a participant, of either the v2 round-memory machinery or the author-side carry-forward machinery. It reads state files from both `~/.claude/cache/review-state/` and `~/.claude/cache/author-state/`; it never writes either. The user's eventual resolution of blockers feeds back into the next invocation of the source skill through (a) plan/code/brief edits, (b) commit messages, (c) `decisions.md` entries, and (d) the source skill's `recently_resolved_blockers` capture priority. None of those flow through this skill.
 
 Applying the picks (when the operator chooses that at the end) edits only the plan / code / brief / PR — never the state files. After the edits land, the resolution feeds back into the next invocation of the source skill, which validates it through its round-memory / carry-forward machinery:
-- Reviewer-side resolutions → re-invoke `/plan-review-v2`, `/engineering-plan-review-v2`, or `/review-pr-v2`.
-- Author-side resolutions → re-invoke `/brief-author`, `/engineering-plan-author`, or `/plan-author` (warm mode is automatic when the artifact already exists).
+- Reviewer-side resolutions → re-invoke the reviewer that raised them: `/vision-review`, `/spec-review`, `/brief-review-v2`, `/engineering-plan-review-v2`, `/plan-review-v2`, or `/review-pr-v2`.
+- Author-side resolutions → re-invoke `/vision-author`, `/spec-author`, `/brief-author`, `/engineering-plan-author`, or `/plan-author` (warm mode is automatic when the artifact already exists).
 
 When the same artifact has BOTH a review-side state file and an author-side state file with unresolved blockers, the user should generally resolve the author-side blockers first (the author skill refuses to emit; the disk-state plan is stale until they do) and then re-run the reviewer afterwards. Surface this dependency in the report header when both sides have entries for the same artifact slug.

@@ -9,10 +9,12 @@ Software fails at the seams between what someone meant, what got planned, and wh
 So the pack refuses to let intent jump straight to code. It forces a feature down a chain of small, written artifacts:
 
 ```
-spec.md  →  brief.md  →  engineering-plan.md  →  implementation/<chunk>.md  →  code
+vision.md  →  spec.md  →  brief.md  →  engineering-plan.md  →  implementation/<chunk>.md  →  code
 ```
 
-Each artifact **descends** from the one above it — a brief realizes part of the spec, an engineering plan decomposes one brief, a chunk plan implements one node of that plan, code implements one chunk. Each is small enough to hold in your head and cheap enough to throw away.
+Each artifact **descends** from the one above it — a spec specifies one mechanism cluster the vision states, a brief realizes part of the spec, an engineering plan decomposes one brief, a chunk plan implements one node of that plan, code implements one chunk. Each is small enough to hold in your head and cheap enough to throw away. (The vision layer only exists in projects big enough to carry several specs — `vision.md` at the root, per-system specs under `specs/<slug>/`. A single-spec project starts the chain at `spec.md`.)
+
+The decomposition at each seam is a **section of the document that decides it**, never a separate artifact: a vision carries its spec map, a spec carries the decomposition that cuts its briefs, an engineering plan carries its chunk DAG. The document that decides a seam is the document that carries it — so the seam gets prosecuted whenever the document does.
 
 And each one is **authored** by a skill, then **prosecuted** by a separate adversarial review skill before anything descends from it. Plans are cheap; wrong plans are expensive, so the scrutiny lives at every layer, not just at the code.
 
@@ -20,9 +22,9 @@ And each one is **authored** by a skill, then **prosecuted** by a separate adver
 
 Every layer is a pair: an author skill and a review skill.
 
-- The **author** (`/brief-author`, `/engineering-plan-author`, `/plan-author`, `/spec-author`) writes the artifact. It grounds every claim against the actual repo — a field, a caller, an endpoint that isn't in the code doesn't get to exist in the plan — and self-prosecutes before it emits, so what lands is already a clean draft, not a first draft.
+- The **author** (`/vision-author`, `/spec-author`, `/brief-author`, `/engineering-plan-author`, `/plan-author`) writes the artifact. It grounds every claim against the actual repo — a field, a caller, an endpoint that isn't in the code doesn't get to exist in the plan — and self-prosecutes before it emits, so what lands is already a clean draft, not a first draft.
 
-- The **review** (`/brief-review-v2`, `/engineering-plan-review-v2`, `/plan-review-v2`, `/spec-review`, `/review-pr-v2`) convenes an adversarial tribunal of persona agents — correctness, security, architecture, testing, and more — that *attack* the artifact. Each files findings backed by evidence, the parent applies the fixes inline, and the skill returns a verdict.
+- The **review** (`/vision-review`, `/spec-review`, `/brief-review-v2`, `/engineering-plan-review-v2`, `/plan-review-v2`, `/review-pr-v2`) convenes an adversarial tribunal of persona agents — correctness, security, architecture, testing, and more — that *attack* the artifact. Each files findings backed by evidence, the parent applies the fixes inline, and the skill returns a verdict.
 
 The reviewer is adversarial on purpose. Its job is not to bless the author's work; it's to try to break it and report what survived. That only works if the reviewer isn't the author — which is where context hygiene comes in (below).
 
@@ -51,7 +53,8 @@ Both write their resolution to the feature's `decisions.md` — the durable arbi
 
 | Artifact | Author | Reviewer | What it fixes in place |
 |---|---|---|---|
-| `spec.md` | `/spec-author` | `/spec-review` | the product source of truth — business rules, formulas, invariants |
+| `vision.md` | `/vision-author` | `/vision-review` | the root source of truth and its spec map (multi-spec projects) |
+| `spec.md` | `/spec-author` | `/spec-review` | the product source of truth — business rules, formulas, invariants — and the decomposition that cuts its briefs |
 | `brief.md` | `/brief-author` | `/brief-review-v2` | one feature's "what & why" — Goals, non-goals, signals |
 | architecture | `/plan-alignment` | — | the direction, bound as a decision |
 | `engineering-plan.md` | `/engineering-plan-author` | `/engineering-plan-review-v2` | the chunk DAG between brief and code |
@@ -85,6 +88,8 @@ Once a chunk plan is APPROVED, `/execute-plan` implements it:
 On a clean **COMPLETE** verdict, `/execute-plan` opens the chunk's PR into `main` for you. It does this *inline* — a direct commit / push / `gh pr create`, not by invoking `/open-pr` — so the self-scheduling guard never has to fire on the pack's own automation. If execution ends BLOCKED, it opens nothing and tells you why.
 
 Then `/review-pr-v2` runs the adversarial tribunal on the actual PR — the same author-then-prosecute pattern, now against the diff and the passing gates. It applies fixes, re-runs the gates, commits, and posts the verdict to the PR. After merge, `/cleanup-worktree` tears the chunk's worktree down.
+
+When a plan's **last chunk** has merged, `/ep-close` seals it: the closed marker goes into the plan, the closure is bound in `decisions.md`, and every plan-layer skill refuses to add chunks to it from then on. Later scope routes to an open sibling track, a new track, or a new feature — never back into a shipped plan. Invoking `/ep-close` *is* the statement that the implementation is finished; the skill trusts the invocation rather than re-auditing the shipped chunks.
 
 There's a matching automation at the plan layer: when `/plan-review-v2` returns APPROVED **twice in a row**, it opens the plan-doc PR inline, the same way and for the same reason.
 

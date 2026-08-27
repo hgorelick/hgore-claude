@@ -21,7 +21,7 @@ Produces or rewrites a per-chunk implementation plan. This is the layer where `/
 
 ## Plan-root resolution
 
-Read `~/.claude/skills/_plan-common/layout.md` before resolving the argument. A feature is **flat** (engineering plan and `implementation/` directly under `features/<feature>/`) or **tracked** (one of each per track under `features/<feature>/plans/<track>/`). Throughout this skill, **`<plan-root>`** is the directory holding the engineering plan that indexes this chunk — `features/<feature>/` when flat, `features/<feature>/plans/<track>/` when tracked. `brief.md` and `decisions.md` always live at the feature root and are shared by every track.
+Read `~/.claude/skills/_plan-common/layout.md` before resolving the argument. A feature is **flat** (engineering plan and `implementation/` directly under `features/<feature>/`) or **tracked** (one of each per track under `features/<feature>/plans/<track>/`). If the engineering plan that indexes this chunk carries the `/ep-close` closure marker (`Status: closed` frontmatter), refuse: a closed plan is implementation complete and accepts no new chunks — the scope routes to an open sibling track, a new track, or a new feature (layout.md § Closed engineering plans). Throughout this skill, **`<plan-root>`** is the directory holding the engineering plan that indexes this chunk — `features/<feature>/` when flat, `features/<feature>/plans/<track>/` when tracked. `brief.md` and `decisions.md` always live at the feature root and are shared by every track.
 
 A two-token `<feature>/<x>` argument is a chunk reference unless `features/<feature>/plans/<x>/engineering-plan.md` exists. A bare `<chunk-slug>` globs both layouts; ambiguity across tracks is reported with the track names, never silently resolved.
 
@@ -29,7 +29,7 @@ A two-token `<feature>/<x>` argument is a chunk reference unless `features/<feat
 
 ## Sidecar location
 
-`~/.claude/cache/author-state/<slug>.json` for chunks under `features/`. Slug derivation follows `_plan-common/layout.md` § State-slug derivation — the artifact path relative to `features/`, minus the `plans/` and `implementation/` segments, `/` → `__`: `<feature>__<chunk-slug>` when flat (e.g., `user-profile-sync/stale-record-cleanup` → `user-profile-sync__stale-record-cleanup.json`), `<feature>__<track>__<chunk-slug>` when tracked (e.g., `team-chat/chat-core/chat-vocabulary` → `team-chat__chat-core__chat-vocabulary.json`).
+`~/.claude/cache/author-state/<slug>.json` for chunks under `features/`. Slug derivation follows `_plan-common/layout.md` § State-slug derivation — the artifact path relative to `features/`, minus the `plans/` and `implementation/` segments, `/` → `__`: `<feature>__<chunk-slug>` when flat (e.g., `user-profile-sync/orphan-cleanup-hardening` → `user-profile-sync__orphan-cleanup-hardening.json`), `<feature>__<track>__<chunk-slug>` when tracked (e.g., `team-chat/chat-core/chat-vocabulary` → `team-chat__chat-core__chat-vocabulary.json`).
 
 For free-standing `.scratch/<name>.md` plans, slug is `scratch__<name>` where `<name>` is the path basename without the `.md` extension (e.g., `.scratch/orphan-bug.md` → `scratch__orphan-bug.json`). For git-tracked `fixes/<name>.md` one-off bug-fix plans, slug is `fixes__<name>` (e.g., `fixes/issue151-silent-refresh.md` → `fixes__issue151-silent-refresh.json`); `fixes/` plans are treated as brief-less exactly like `.scratch/` (no parent feature/brief). For other free-standing paths, slug is `scratch__<sanitized-name>` where `<sanitized-name>` replaces path separators with `__` and strips the `.md` extension.
 
@@ -46,11 +46,11 @@ Implementation plans are written to disk with a **creation-index filename prefix
 ```
 <plan-root>/implementation/
   01-schema-migration.md
-  02-external-id-backfill.md
-  03-cascade-cleanup-ordering.md
+  02-wikidata-qid-backfill.md
+  03-cascade-direction-neutral.md
 ```
 
-- **The prefix is a glance-ordering affordance, not identity.** The slug stays prefix-free *everywhere else*: the H1 (`# Chunk: \`cascade-cleanup-ordering\``), the `**Slug:**` line, the sidecar key (`<feature>__<chunk-slug>.json`), the engineering-plan chunk-index row, every `decisions.md` citation, and the PR branch. Only the on-disk filename carries `<NN>-`. `/plan-lint` strips the prefix before deriving the slug, so the position-encoded-slug rule still rejects a number that leaks into the *identity*.
+- **The prefix is a glance-ordering affordance, not identity.** The slug stays prefix-free *everywhere else*: the H1 (`# Chunk: \`cascade-direction-neutral\``), the `**Slug:**` line, the sidecar key (`<feature>__<chunk-slug>.json`), the engineering-plan chunk-index row, every `decisions.md` citation, and the PR branch. Only the on-disk filename carries `<NN>-`. `/plan-lint` strips the prefix before deriving the slug, so the position-encoded-slug rule still rejects a number that leaks into the *identity*.
 - **Format:** two-digit zero-padded, monotonically increasing per feature in authoring order — `01`, `02`, … `99`. Zero-padding keeps the lexical `ls` sort aligned with numeric order. (A feature that exceeds 99 chunks pads to three digits from the point of overflow.)
 - **Assignment (new plan):** glob `<plan-root>/implementation/*.md`; the next index is `max(highest existing prefix, plan-file count) + 1`, zero-padded. The count term keeps the number sensible even when some plans in the folder are still bare (un-backfilled). Indices are **per plan root**, not per feature: two tracks of the same feature each start at `01`, because the prefix orders a directory listing and each track has its own. Record it in the sidecar's `creation_index`.
 - **Reuse (re-authoring an existing plan):** the index is assigned once, at first creation, and is **stable for the life of the chunk** — never renumbered. When a plan file for this slug already exists, write back to its *current* filename (read `creation_index` from the sidecar, or take the prefix already on the file). A re-authoring run that lands NEEDS_USER_INPUT writes the partial draft back to that same filename.
@@ -73,7 +73,7 @@ State load (deterministic; ~5 seconds)
   │   (consulted by the Concern gate's carry-forward consultation if a refusal pattern matches)
   └─ Determine cold vs warm mode
 
-Plan-worktree provisioning (when your project provides a worktree bootstrap script; deterministic; plain `git worktree add` off origin/main — no project bootstrap script)
+Plan-worktree provisioning (when a bootstrap script exists; deterministic; plain `git worktree add` off origin/main — the script itself is NOT used)
   ├─ No-op (author in place) when: --no-worktree, .scratch/ plan, already inside a linked worktree, or no worktree bootstrap script
   ├─ SLUG = the chunk's prefix-free slug; reuse .worktrees/<SLUG>-plan if it exists on branch <SLUG>-plan; else create off origin/main
   │   (git fetch origin main; git branch <SLUG>-plan origin/main; git worktree add .worktrees/<SLUG>-plan <SLUG>-plan)
@@ -91,7 +91,7 @@ Source ingest (deterministic; ~60 seconds — runs inside the plan worktree when
   ├─ Read existing chunk plan (warm mode)
   ├─ Read every file the chunk's "Read first" list cites (the chunk's read-set)
   ├─ Read CLAUDE.md, MEMORY.md, project memory
-  ├─ Read the project's schema/data-model definitions and API operation definitions, sibling chunk plans for shape consistency
+  ├─ Read schema.prisma, operations.graphql, sibling chunk plans for shape consistency
   └─ Build invariants ledger, identifier ledger, decisions ledger
 
 Concern gate (deterministic — HARD-blocking unless carry-forward applies)
@@ -201,7 +201,7 @@ Read the author sidecar. Schema:
     "action": "created | reused | in-place",
     "path": "<.worktrees/<SLUG>-plan or null when in-place>",
     "branch": "<<SLUG>-plan or null when in-place>",
-    "in_place_reason": "--no-worktree | already-in-linked-worktree | scratch-plan | no-worktree-script | null",
+    "in_place_reason": "--no-worktree | already-in-linked-worktree | scratch-plan | no-bootstrap-script | null",
     "authority_stack_from": "worktree | invocation-checkout (cold-create fallback)"
   },
   "authoring_mode": "ship | draft",
@@ -296,7 +296,7 @@ Also read the engineering-plan-author sidecar `~/.claude/cache/author-state/<ep-
 
 ## Plan-worktree provisioning (when your project provides a worktree bootstrap script; runs after State load, before Source ingest)
 
-When your project provides a worktree bootstrap script, the chunk plan is authored inside a **lightweight, per-plan worktree** off `origin/main`, not in the primary checkout. Plan authoring only ever writes markdown (the plan file), so the worktree is a plain `git worktree add` — it does **NOT** invoke that bootstrap script, and provisions **no** dev-stack services, dependencies, or seed data (that heavy path is `/execute-plan`'s, for code that runs tests). The worktree and its branch are named for this chunk plan's slug with a `-plan` suffix, so the authoring branch pairs with `/execute-plan`'s `<slug>` implementation branch and the two never collide. This keeps the primary checkout clean and lets parallel `/plan-author` sessions run without racing on the shared tree.
+When your project provides a worktree bootstrap script, the chunk plan is authored inside a **lightweight, per-plan worktree** off `origin/main`, not in the primary checkout. Plan authoring only ever writes markdown (the plan file), so the worktree is a plain `git worktree add` — it does **NOT** use the bootstrap script and provisions **no** dev-services stack, dependencies, or seed data (that heavy path is `/execute-plan`'s, for code that runs tests). The worktree and its branch are named for this chunk plan's slug with a `-plan` suffix, so the authoring branch pairs with `/execute-plan`'s `<slug>` implementation branch and the two never collide. This keeps the primary checkout clean and lets parallel `/plan-author` sessions run without racing on the shared tree.
 
 The provisioning happens after State load (which only touches the global `~/.claude/cache` sidecars) and before Source ingest, because Source ingest reads the feature's authority stack (`brief.md` / `engineering-plan.md` / `decisions.md`) and must resolve it inside the worktree when those artifacts are already on `main`, or from the invocation checkout when they are not yet merged (see the cold-create fallback).
 
@@ -307,7 +307,7 @@ Provisioning runs unless ANY of the following holds, in which case this stage is
 - **`--no-worktree` was passed.**
 - **The plan is a `.scratch/<name>.md` plan** — `.scratch/` is gitignored, so it has no git home to put on a branch. (`fixes/<name>.md` plans ARE git-tracked, so they DO get a plan worktree.)
 - **Already inside a linked worktree** — `git rev-parse --git-dir` differs from `git rev-parse --git-common-dir`. The session is already isolated in some `.worktrees/<name>`; write the plan there rather than nesting a worktree in a worktree.
-- **No worktree bootstrap script** — the repo has no executable worktree bootstrap script at its root (the project-specific tool that provisions an isolated per-chunk worktree with its own dev stack). This skill is global; the whole stage is a no-op elsewhere.
+- **No worktree bootstrap script** — no executable bootstrap script exists at the repo root (`git rev-parse --show-toplevel`). This skill is global; the whole stage is a no-op elsewhere.
 
 ### Worktree identity
 
@@ -325,7 +325,7 @@ The `-plan` suffix keeps this worktree and branch distinct from `/execute-plan`'
    - its checked-out branch is `$BRANCH` (`<SLUG>-plan`) → **adopt it**: re-anchor to `$WT_PATH`, skip creation. This is a re-author of the same chunk plan.
    - any other branch → REFUSE `PLAN_WORKTREE_COLLISION` (something else owns that path; the user resolves it — e.g. `/cleanup-worktree <WT_NAME>`).
 2. **Sync + pin the base (fresh create only).** `git -C "$MAIN_ROOT" fetch origin main`. Pin the branch to `origin/main` explicitly rather than forking off the shared checkout's current HEAD (the shared-tree branch-creation race): `git -C "$MAIN_ROOT" branch "$BRANCH" origin/main`. If `$BRANCH` already exists with no worktree (a leftover from an aborted run), reuse it; otherwise the branch is live elsewhere → REFUSE `PLAN_BRANCH_EXISTS`.
-3. **Create the worktree.** `git -C "$MAIN_ROOT" worktree add "$WT_PATH" "$BRANCH"`. Plain and fast — no project bootstrap script, no dev-stack services or dependencies.
+3. **Create the worktree.** `git -C "$MAIN_ROOT" worktree add "$WT_PATH" "$BRANCH"`. Plain and fast — no bootstrap script, no DB/deps.
 4. **Re-anchor.** Set the working directory to `$WT_PATH` for Source ingest and every stage below. All authority-stack reads, read-set reads, sibling-plan reads, the Brief-conformance gate's `{brief_path}`/`{decisions_path}` substitutions, and the final plan write resolve inside `$WT_PATH`. The sidecar (`~/.claude/cache/author-state/<slug>.json`), the DRAFT materialization (`~/.claude/cache/author-state/<slug>-DRAFT.md`), and the Plan-lint temp (`/tmp/<slug>-draft-<timestamp>.md`) keep their absolute paths — they are outside the repo and unaffected.
 
 ### Authority-stack presence (cold-create fallback)
@@ -338,7 +338,7 @@ A per-plan worktree is a fresh branch off `origin/main`, so it carries the autho
 
 ### After authoring
 
-`/plan-author` does NOT commit, push, or open a PR — the plan file simply lands on the `<SLUG>-plan` branch in the worktree. Run `/plan-review-v2` from inside the plan worktree (the plan and its authority stack resolve there), then commit + `/open-pr` when clean. After the plan PR merges, tear the worktree down with `/cleanup-worktree <WT_NAME>` (or `git worktree remove` — the plain worktree has no dev-stack services, so `/cleanup-worktree`'s dev-stack teardown is a guarded no-op for it).
+`/plan-author` does NOT commit, push, or open a PR — the plan file simply lands on the `<SLUG>-plan` branch in the worktree. Run `/plan-review-v2` from inside the plan worktree (the plan and its authority stack resolve there), then commit + `/open-pr` when clean. After the plan PR merges, tear the worktree down with `/cleanup-worktree <WT_NAME>` (or `git worktree remove` — the plain worktree has no Postgres stack, so `/cleanup-worktree`'s DB teardown is a guarded no-op for it).
 
 ---
 
@@ -358,7 +358,7 @@ Read in this order:
 4. Existing chunk plan (when re-authoring) — current §Owns, §Contracts, etc. are a carry-forward constraint. A mid-cycle `Status: needs-user-input` plan is resolved by the session agent applying blocker resolutions directly, not by re-running this skill.
 5. Every file in the chunk's planned "Read first" list — the implementer's read-set is the chunk's anchor surface; the author must have read all of it.
 6. `CLAUDE.md` (project conventions, business rules); `MEMORY.md` + relevant project memory.
-7. The project's schema/data-model definition file (if backend chunk) or its API operation definitions (if frontend chunk).
+7. `backend/prisma/schema.prisma` (if backend chunk) or `mobile/src/graphql/operations.graphql` (if frontend chunk).
 8. Sibling chunk plans in `features/*/implementation/*.md` and `features/*/plans/*/implementation/*.md` — for shape, tone, density, depth-of-prescription consistency.
 
 Build:
@@ -508,7 +508,7 @@ section, as does any condition that would abandon the whole feature.>
 
 - **Goal sentence is ONE concern.** Apply the halved-work test: if you halved the work in §Owns, would the other half still be a coherent shippable thing? If yes, the chunk is multi-concern; split it. Conjunctions in the Goal sentence are NOT a refusal trigger — "extract helper used in 12 sites and migrate callsites" is one concern (the migration is incomplete without the extraction); "add field X and the test that proves X" is one concern (the test is not separate work). The halved-work test is what matters, not the surface syntax.
 - **Context pack "Read first" is honest.** Every file listed is one the implementer truly must read; gratuitous additions just dilute attention.
-- **Conventions are byte-format pinned OR cite an existing pattern.** Conventions like "stderr regex format `^abort: ...`" or "audit-row write inside `db.transaction(async (tx) => { ... })`" are byte-pinned and testable. Conventions like "use good error handling" are useless.
+- **Conventions are byte-format pinned OR cite an existing pattern.** Conventions like "stderr regex format `^abort: ...`" or "audit-row write inside `prisma.$transaction(async (tx) => { ... })`" are byte-pinned and testable. Conventions like "use good error handling" are useless.
 - **§Owns describes file purpose, not implementation steps.** "X.ts owns the orphan-deletion script" is good. "X.ts step 1: parse args; step 2: query orphans; step 3: ..." is implementation prose that drifts as code is written. Steps go in the implementer's head, not the plan body.
 - **Compute the outcome on its authoritative signal, not a proxy (basis fidelity).** When your §Goal — or the brief Goal / engineering-plan chunk-index row it delivers — names a distinguished *authoritative signal* the outcome must be judged on ("the classifier verdict", "the restored author links", "judged on the work itself"), your §Owns / §Contracts / §Acceptance must compute it on that signal, not a degraded proxy (a title-pattern heuristic for a classifier verdict; a snapshot count for restored links). This is the write-side mirror of `/plan-review-v2`'s Stage 1 basis-fidelity check and the chunk-layer half of the engineering-plan-layer Scope-fidelity Adversary (the other two parity axes — domain coverage and pipeline timing — live at the engineering-plan layer). The one legitimate exception: the EP row, a bound `decisions.md` entry, or your §Out of scope already committed the proxy and framed it as launch-acceptable — then it is the engineering-plan layer's call, already made, and you implement it as bound. Silently resolving an authoritative-but-underspecified EP row *toward* the proxy is a `SURFACE_PARITY_GAP` the reviewer will file; catch it here instead.
 - **§Contracts changed enumerates exports + schema diffs only.** New non-exported helpers don't go here.
@@ -630,8 +630,8 @@ Spawn 5 persona agents in parallel using the template in `_author-common/self-pr
 
 - **backend** OR **frontend** — depending on which directory the chunk's §Owns concentrates in. Backend chunks use the backend persona; frontend chunks use the frontend persona. Mixed-stack chunks (rare; usually a sign of multi-concern) get both.
 - **architecture** — system-shape coherence, hidden dependencies, factoring, cross-chunk wiring.
-- **testing** — assertion-shape rigor, test-helper hallucinations, fixture coverage, RED-state ordering, real-DB cleanup conventions. **This persona catches the highest volume of findings at the chunk layer** (per the stale-record-cleanup case study, 14+ findings classed Testing).
-- **security** — auth checks, input validation, secret handling, atomic rollback, DB constraint-violation scrub bindings (unique/not-found), cascade-flip dust quantification.
+- **testing** — assertion-shape rigor, test-helper hallucinations, fixture coverage, RED-state ordering, real-DB cleanup conventions. **This persona catches the highest volume of findings at the chunk layer** (per the orphan-cleanup-hardening case study, 14+ findings classed Testing).
+- **security** — auth checks, input validation, secret handling, atomic rollback, P2002/P2025 scrub bindings, cascade-flip dust quantification.
 - **ai-development** — chunk discipline, plan-quality, banned style, byte-format prescriptions vs proscriptions.
 
 Active critical pairs: universal pairs + chunk-plan-specific pairs (`P-CHUNK-TEST-PATHS`, `P-CHUNK-COMMANDS`, `P-CHUNK-SINGLE-CONCERN`, `P-CHUNK-READ-FIRST`).
@@ -645,7 +645,7 @@ After consolidation, run post-fix premise verification on orchestrator-rewritten
 
 **Mode:** cold | warm
 **Authoring mode:** ship | draft
-**Plan worktree:** <`.worktrees/<SLUG>-plan` on branch `<SLUG>-plan` (created | reused) | in-place (--no-worktree | already in linked worktree | .scratch/ | no worktree bootstrap script)>
+**Plan worktree:** <`.worktrees/<SLUG>-plan` on branch `<SLUG>-plan` (created | reused) | in-place (--no-worktree | already in linked worktree | .scratch/ | no bootstrap script)>
 **Round:** <invocation_number>
 **Last plan sha:** <hex>
 
@@ -781,7 +781,7 @@ Once the session agent has applied every resolution, it removes the entire `## P
 ## Hard rules
 
 - **Stage order is fixed.** State load → Plan-worktree provisioning → Source ingest → Concern gate → Draft → Brief-conformance gate → Plan-lint gate → Ground-truth audit → Self-prosecution → Prose-Density gate → Verdict emission. `--draft` skips Plan-lint, Ground-truth audit, Self-prosecution, and Prose-Density gate (the last because it runs *after* Self-prosecution, which is skipped — there is no post-Self-prosecution measurement point in --draft mode); the Concern gate and Brief-conformance gate still run. `--draft` does NOT skip Plan-worktree provisioning — a draft plan is still written to the `<SLUG>-plan` branch, not the primary checkout.
-- **Plan-worktree provisioning is mandatory when your project provides a worktree bootstrap script** (unless a no-op condition holds). Runs after State load, before Source ingest: a plain `git worktree add` off `origin/main` (per-plan `.worktrees/<SLUG>-plan` on branch `<SLUG>-plan`, where `SLUG` is the chunk's prefix-free slug; `fixes/<name>.md` → `.worktrees/<name>-plan` on `<name>-plan`) — not the project's worktree bootstrap script, so no dev-stack services/deps/seed data. The `-plan` suffix pairs the authoring branch with `/execute-plan`'s `<SLUG>` implementation branch without colliding. Both the authority-stack reads AND the plan write re-anchor there. No-op (author in place, reason recorded in the sidecar) only when: `--no-worktree`, a `.scratch/` plan (gitignored — no branchable home), already inside a linked worktree (`--git-dir` ≠ `--git-common-dir`), or the project has no worktree bootstrap script. `/plan-author` never commits, pushes, or opens a PR from the worktree — it only writes the plan file; the user runs `/plan-review-v2` there next, then commits + `/open-pr`.
+- **Plan-worktree provisioning is mandatory when your project provides a worktree bootstrap script** (unless a no-op condition holds). Runs after State load, before Source ingest: a plain `git worktree add` off `origin/main` (per-plan `.worktrees/<SLUG>-plan` on branch `<SLUG>-plan`, where `SLUG` is the chunk's prefix-free slug; `fixes/<name>.md` → `.worktrees/<name>-plan` on `<name>-plan`) — NOT the bootstrap script, so no dev stack/deps/seed data. The `-plan` suffix pairs the authoring branch with `/execute-plan`'s `<SLUG>` implementation branch without colliding. Both the authority-stack reads AND the plan write re-anchor there. No-op (author in place, reason recorded in the sidecar) only when: `--no-worktree`, a `.scratch/` plan (gitignored — no branchable home), already inside a linked worktree (`--git-dir` ≠ `--git-common-dir`), or no worktree bootstrap script at the repo root. `/plan-author` never commits, pushes, or opens a PR from the worktree — it only writes the plan file; the user runs `/plan-review-v2` there next, then commits + `/open-pr`.
 - **Engineering plan must be CLOSED.** If the engineering-plan-author sidecar's verdict is APPROVED (decisions still undecided) or NEEDS_USER_INPUT, the chunk plan author refuses to run. The session agent binds the cross-chunk decisions in `decisions.md` and marks the engineering plan CLOSED first — the engineering-plan author is not re-invoked.
 - **Concern gate is HARD-blocking unless carry-forward applies.** Triggered only by self-disclosed bundling (the description literally containing `\bN-concern\b`, `\bbundle\b`, or `\bbundling\b`). A draft for a self-admitted multi-concern chunk does not reach Draft when no upstream arbitration is recorded in the engineering-plan reviewer state, the engineering-plan-author state, or the engineering plan's `## Decisions closure` section. Other concern judgments (genuine bundling that the description doesn't self-disclose) are handled semantically by the ai-development persona's halved-work test in Self-prosecution, NOT by this gate.
 - **Plan-Lint is HARD-blocking.** Same as engineering-plan-author.
@@ -810,7 +810,7 @@ Once the session agent has applied every resolution, it removes the entire `## P
 
 **Sibling test patterns referenced (e.g., `vi.spyOn` from `recordSync.test.ts`):** Verify each by Read of the cited sibling file at the cited section. If the pattern actually appears, anchor the citation symbolically (`recordSync.test.ts:<test-name>`); if not, surface `INVENTED_TEST_PATTERN` finding (testing persona's class).
 
-**Real-DB test cleanup pattern needed:** If the chunk's tests write to the real test DB AND no sibling test in the same `__tests__/` directory has a real-DB cleanup template, the chunk plan must define the template in §Conventions (BASE constants, sequence-restore, OR-predicate cleanup). Author-side: surface this as an `OPEN_QUESTION` if the user hasn't bound conventions; per the stale-record-cleanup case, the user resolved this in Round 5 Batch A.
+**Real-DB test cleanup pattern needed:** If the chunk's tests write to the real test DB AND no sibling test in the same `__tests__/` directory has a real-DB cleanup template, the chunk plan must define the template in §Conventions (BASE constants, sequence-restore, OR-predicate cleanup). Author-side: surface this as an `OPEN_QUESTION` if the user hasn't bound conventions; per the orphan-cleanup-hardening case, the user resolved this in Round 5 Batch A.
 
 **Repository state drift mid-authoring (rare):** If the SHA of files in the chunk's read-set changes between Source-ingest read and Ground-truth-audit verification, treat as `REPO_STATE_DRIFT` and require re-invocation. The deterministic detection: capture each read file's SHA at Source ingest; re-check at Ground-truth audit entry.
 
@@ -835,7 +835,7 @@ Once the session agent has applied every resolution, it removes the entire `## P
 ## Relationship to sister skills
 
 - **Upstream: `/engineering-plan-author`.** Must be at CLOSED for chunk authoring to proceed (see Hard rules).
-- **Reviewer: `/plan-review-v2`.** The immediate next step after this author's first draft. When your project provides a worktree bootstrap script, run it from **inside the plan worktree** — that is where the plan lands (the `<SLUG>-plan` branch), and where its authority stack resolves (from `main`, or the invocation checkout under the cold-create fallback). Its `recently_resolved_blockers` are warm-mode constraints. Author-side findings share blocker classes. The author's sidecar's `introduced_identifiers` and `ground_truth_log` let `/plan-review-v2` skip re-prosecuting verified claims (the sidecar is at the global `~/.claude/cache` path, so it is shared across worktrees).
+- **Reviewer: `/plan-review-v2`.** The immediate next step after this author's first draft. When a plan worktree was provisioned, run it from **inside the plan worktree** — that is where the plan lands (the `<SLUG>-plan` branch), and where its authority stack resolves (from `main`, or the invocation checkout under the cold-create fallback). Its `recently_resolved_blockers` are warm-mode constraints. Author-side findings share blocker classes. The author's sidecar's `introduced_identifiers` and `ground_truth_log` let `/plan-review-v2` skip re-prosecuting verified claims (the sidecar is at the global `~/.claude/cache` path, so it is shared across worktrees).
 - **Indirect upstream: `/brief-author`.** Brief edits cascade through `/engineering-plan-author` re-authoring; chunk plans inherit the latest brief Goals via the engineering plan's Brief Mapping table.
 
-The chunk-plan layer is where thrash concentrates and where this skill earns its keep. The stale-record-cleanup case (Round 5: 28 findings, 5 user decisions, 13 batches, 563-line plan) is exactly what the concern gate + ground-truth + self-prosecution stack is designed to prevent at write time, not five rounds later at review time.
+The chunk-plan layer is where thrash concentrates and where this skill earns its keep. The orphan-cleanup-hardening case (Round 5: 28 findings, 5 user decisions, 13 batches, 563-line plan) is exactly what the concern gate + ground-truth + self-prosecution stack is designed to prevent at write time, not five rounds later at review time.
